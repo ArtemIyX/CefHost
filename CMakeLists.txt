@@ -10,7 +10,7 @@ find_package(CEF REQUIRED)
 
 add_subdirectory(${CEF_ROOT}/libcef_dll libcef_dll)
 
-add_executable(Host main.cpp simple_app.cpp)
+add_executable(Host main.cpp simple_app.cpp "shm/SharedMemoryLayout.h" "shm/FrameBufffer.h" "shm/InputBuffer.h")
 
 target_include_directories(Host PRIVATE ${CEF_ROOT})
 
