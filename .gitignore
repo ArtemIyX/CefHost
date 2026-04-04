@@ -1,0 +1,15 @@
+out/
+build/
+.vs/
+*.user
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+*.exe
