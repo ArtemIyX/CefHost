@@ -1,5 +1,6 @@
 #include "osr_handler.h"
 #include "include/cef_browser.h"
+#include <cstdio>
 
 OsrHandler::OsrHandler(uint32_t width, uint32_t height)
     : m_width(width), m_height(height)
@@ -15,8 +16,30 @@ bool OsrHandler::Init()
 
 void OsrHandler::Shutdown()
 {
+    StopRenderLoop();
     m_frameBuffer.Shutdown();
     m_inputBuffer.Shutdown();
+}
+
+void OsrHandler::StartRenderLoop()
+{
+    m_running = true;
+    m_renderThread = std::thread([this]()
+        {
+            while (m_running)
+            {
+                if (m_browser)
+                    m_browser->GetHost()->Invalidate(PET_VIEW);
+                std::this_thread::sleep_for(std::chrono::milliseconds(16)); // ~60fps
+            }
+        });
+}
+
+void OsrHandler::StopRenderLoop()
+{
+    m_running = false;
+    if (m_renderThread.joinable())
+        m_renderThread.join();
 }
 
 void OsrHandler::GetViewRect(CefRefPtr<CefBrowser> browser, CefRect& rect)
@@ -30,6 +53,9 @@ void OsrHandler::OnPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
 {
     if (type != PET_VIEW) return;
 
+    std::printf("[OSR] OnPaint: %dx%d rects=%zu\n", width, height, dirty_rects.size());
+    fflush(stdout);
+
     const size_t data_size = static_cast<size_t>(width) * height * 4;
     m_frameBuffer.WriteFrame(
         static_cast<uint32_t>(width),
@@ -37,6 +63,18 @@ void OsrHandler::OnPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
         buffer,
         data_size
     );
+}
+
+CefRefPtr<CefLifeSpanHandler> OsrHandler::GetLifeSpanHandler()
+{
+    return this;
+}
+
+void OsrHandler::OnAfterCreated(CefRefPtr<CefBrowser> browser)
+{
+    m_browser = browser;
+    browser->GetHost()->SetFocus(true);
+    StartRenderLoop();
 }
 
 void OsrHandler::Resize(uint32_t width, uint32_t height)

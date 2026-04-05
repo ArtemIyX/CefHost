@@ -3,8 +3,9 @@
 #include "include/cef_render_handler.h"
 #include "shm/FrameBuffer.h"
 #include "shm/InputBuffer.h"
+#include <thread>
 
-class OsrHandler : public CefClient, public CefRenderHandler
+class OsrHandler : public CefClient, public CefLifeSpanHandler, public CefRenderHandler
 {
 public:
     OsrHandler(uint32_t width, uint32_t height);
@@ -18,6 +19,8 @@ public:
     void OnPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
         const RectList& dirty_rects, const void* buffer,
         int width, int height) override;
+    CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override;
+    void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
 
     // Call from main loop to resize
     void Resize(uint32_t width, uint32_t height);
@@ -29,10 +32,16 @@ public:
     void Shutdown();
 
 private:
+    void StartRenderLoop();
+    void StopRenderLoop();
+private:
     uint32_t    m_width;
     uint32_t    m_height;
     FrameBuffer m_frameBuffer;
     InputBuffer m_inputBuffer;
+    CefRefPtr<CefBrowser> m_browser;
+    std::thread       m_renderThread;
+    std::atomic<bool> m_running{ false };
 
     IMPLEMENT_REFCOUNTING(OsrHandler);
 };

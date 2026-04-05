@@ -16,6 +16,7 @@ int main(int argc, char* argv[])
 
     CefSettings settings;
     settings.no_sandbox = true;
+    settings.windowless_rendering_enabled = true;
 
     CefInitialize(main_args, settings, app, nullptr);
     CefRunMessageLoop();
