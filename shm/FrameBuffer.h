@@ -55,6 +55,10 @@ public:
 
     ~FrameBuffer() { Shutdown(); }
 
+    FrameHeader* GetHeader() const
+    {
+        return reinterpret_cast<FrameHeader*>(m_pData);
+    }
 private:
     HANDLE m_hMap = nullptr;
     HANDLE m_hEvent = nullptr;

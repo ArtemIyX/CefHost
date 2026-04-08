@@ -15,16 +15,74 @@ constexpr const wchar_t* EVT_INPUT_READY = L"CEFHost_InputReady";
 
 #pragma pack(push, 1)
 
+// Mirrors cef_cursor_type_t values we care about.
+// Values match CEF enum so casting is safe.
+enum class CefCursorType : uint8_t
+{
+    CT_POINTER,
+    CT_CROSS,
+    CT_HAND,
+    CT_IBEAM,
+    CT_WAIT,
+    CT_HELP,
+    CT_EASTRESIZE,
+    CT_NORTHRESIZE,
+    CT_NORTHEASTRESIZE,
+    CT_NORTHWESTRESIZE,
+    CT_SOUTHRESIZE,
+    CT_SOUTHEASTRESIZE,
+    CT_SOUTHWESTRESIZE,
+    CT_WESTRESIZE,
+    CT_NORTHSOUTHRESIZE,
+    CT_EASTWESTRESIZE,
+    CT_NORTHEASTSOUTHWESTRESIZE,
+    CT_NORTHWESTSOUTHEASTRESIZE,
+    CT_COLUMNRESIZE,
+    CT_ROWRESIZE,
+    CT_MIDDLEPANNING,
+    CT_EASTPANNING,
+    CT_NORTHPANNING,
+    CT_NORTHEASTPANNING,
+    CT_NORTHWESTPANNING,
+    CT_SOUTHPANNING,
+    CT_SOUTHEASTPANNING,
+    CT_SOUTHWESTPANNING,
+    CT_WESTPANNING,
+    CT_MOVE,
+    CT_VERTICALTEXT,
+    CT_CELL,
+    CT_CONTEXTMENU,
+    CT_ALIAS,
+    CT_PROGRESS,
+    CT_NODROP,
+    CT_COPY,
+    CT_NONE,
+    CT_NOTALLOWED,
+    CT_ZOOMIN,
+    CT_ZOOMOUT,
+    CT_GRAB,
+    CT_GRABBING,
+    CT_MIDDLE_PANNING_VERTICAL,
+    CT_MIDDLE_PANNING_HORIZONTAL,
+    CT_CUSTOM,
+    CT_DND_NONE,
+    CT_DND_MOVE,
+    CT_DND_COPY,
+    CT_DND_LINK,
+    CT_NUM_VALUES,
+};
+
 struct FrameHeader
 {
-    uint32_t width;
-    uint32_t height;
-    uint32_t sequence;   // incremented each frame
-    uint32_t write_slot; // 0 or 1 — which pixel buffer holds the latest complete frame
+    uint32_t      width;
+    uint32_t      height;
+    uint32_t      sequence;    // incremented each frame
+    uint32_t      write_slot;  // 0 or 1 - which pixel buffer holds the latest complete frame
+    CefCursorType cursor_type; // updated by OnCursorChange, read by UE5
+    uint8_t       reserved[3];
 };
 
 // Layout: [FrameHeader][pixel buffer 0][pixel buffer 1]
-// Writer alternates slots; reader consumes write_slot after sequence changes.
 constexpr uint32_t SHM_FRAME_TOTAL = sizeof(FrameHeader) + SHM_FRAME_SIZE * 2;
 
 enum class InputEventType : uint8_t

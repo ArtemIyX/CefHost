@@ -1,12 +1,13 @@
 ﻿#pragma once
 #include "include/cef_client.h"
 #include "include/cef_render_handler.h"
+#include "include/cef_display_handler.h"
 #include "shm/FrameBuffer.h"
 #include "shm/InputBuffer.h"
 #include <thread>
 #include <atomic>
 
-class OsrHandler : public CefClient, public CefLifeSpanHandler, public CefRenderHandler, public CefContextMenuHandler
+class OsrHandler : public CefClient, public CefLifeSpanHandler, public CefRenderHandler, public CefContextMenuHandler, public CefDisplayHandler
 {
 public:
     OsrHandler(uint32_t width, uint32_t height);
@@ -16,7 +17,12 @@ public:
     CefRefPtr<CefRenderHandler>  GetRenderHandler()  override { return this; }
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
     CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override { return this; }
+    CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
 
+    bool OnCursorChange(CefRefPtr<CefBrowser> browser,
+        CefCursorHandle cursor,
+        cef_cursor_type_t type,
+        const CefCursorInfo& custom_cursor_info) override;
     // CefContextMenuHandler
     void OnBeforeContextMenu(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
         CefRefPtr<CefContextMenuParams> params,

@@ -49,6 +49,14 @@ void OsrHandler::StopRenderLoop()
         m_renderThread.join();
 }
 
+bool OsrHandler::OnCursorChange(CefRefPtr<CefBrowser> browser, CefCursorHandle cursor, cef_cursor_type_t type, const CefCursorInfo& custom_cursor_info)
+{
+    FrameHeader* header = m_frameBuffer.GetHeader();
+    if (header)
+        header->cursor_type = static_cast<CefCursorType>(type);
+    return true;
+}
+
 void OsrHandler::OnBeforeContextMenu(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, CefRefPtr<CefContextMenuParams> params, CefRefPtr<CefMenuModel> model)
 {
 
