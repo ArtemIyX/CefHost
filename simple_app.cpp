@@ -12,6 +12,7 @@ void SimpleApp::OnContextInitialized()
 
     CefBrowserSettings browser_settings;
     browser_settings.windowless_frame_rate = 60;
+    browser_settings.background_color = CefColorSetARGB(0, 0, 0, 0);
 
     CefBrowserHost::CreateBrowser(
         window_info, handler, "https://testufo.com/",

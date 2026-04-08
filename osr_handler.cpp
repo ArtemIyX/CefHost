@@ -11,6 +11,7 @@ bool OsrHandler::Init()
 {
     if (!m_frameBuffer.Init()) return false;
     if (!m_inputBuffer.Init()) return false;
+    if (!m_controlBuffer.Init()) return false;
     return true;
 }
 
@@ -19,6 +20,7 @@ void OsrHandler::Shutdown()
     StopRenderLoop();
     m_frameBuffer.Shutdown();
     m_inputBuffer.Shutdown();
+    m_controlBuffer.Shutdown();
 }
 
 void OsrHandler::StartRenderLoop()
@@ -31,12 +33,12 @@ void OsrHandler::StartRenderLoop()
                 // m_browser is set before StartRenderLoop() and cleared in OnBeforeClose()
                 // which only fires after CEF teardown — safe to read without lock here.
                 CefRefPtr<CefBrowser> browser = m_browser;
-                if (browser) 
+                if (browser && !m_paused)
                 {
                     browser->GetHost()->Invalidate(PET_VIEW);
                     PumpInput();
                 }
-
+                PumpControl();
                 std::this_thread::sleep_for(std::chrono::milliseconds(16)); // ~60 fps
             }
         });
@@ -249,6 +251,120 @@ void OsrHandler::PumpInput()
             break;
         }
         }
+        fflush(stdout);
+    }
+}
+
+void OsrHandler::PumpControl()
+{
+    CefRefPtr<CefBrowser> browser = m_browser;
+    if (!browser) return;
+    CefRefPtr<CefBrowserHost> host = browser->GetHost();
+
+    ControlEvent evt;
+    while (m_controlBuffer.ReadEvent(evt))
+    {
+        switch (evt.type)
+        {
+        case ControlEventType::GoBack:
+            std::printf("[CONTROL] GoBack\n");
+            browser->GoBack();
+            break;
+
+        case ControlEventType::GoForward:
+            std::printf("[CONTROL] GoForward\n");
+            browser->GoForward();
+            break;
+
+        case ControlEventType::StopLoad:
+            std::printf("[CONTROL] StopLoad\n");
+            browser->StopLoad();
+            break;
+
+        case ControlEventType::Reload:
+            std::printf("[CONTROL] Reload\n");
+            browser->Reload();
+            break;
+
+        case ControlEventType::SetURL:
+            std::printf("[CONTROL] SetURL\n");
+            browser->GetMainFrame()->LoadURL(CefString(evt.string.text));
+            break;
+
+        case ControlEventType::SetPaused:
+            std::printf("[CONTROL] SetPaused=%d\n", (int)evt.flag.value);
+            m_paused = evt.flag.value;
+            break;
+
+        case ControlEventType::SetHidden:
+            std::printf("[CONTROL] SetHidden=%d\n", (int)evt.flag.value);
+            host->WasHidden(evt.flag.value);
+            break;
+
+        case ControlEventType::SetFocus:
+            std::printf("[CONTROL] SetFocus=%d\n", (int)evt.flag.value);
+            host->SetFocus(evt.flag.value);
+            break;
+
+        case ControlEventType::SetZoomLevel:
+            std::printf("[CONTROL] SetZoomLevel=%.2f\n", evt.zoom.value);
+            host->SetZoomLevel(static_cast<double>(evt.zoom.value));
+            break;
+
+        case ControlEventType::SetFrameRate:
+            std::printf("[CONTROL] SetFrameRate=%u\n", evt.frame_rate.value);
+            host->SetWindowlessFrameRate(static_cast<int>(evt.frame_rate.value));
+            break;
+
+        case ControlEventType::ScrollTo:
+            std::printf("[CONTROL] ScrollTo x=%d y=%d\n", evt.scroll.x, evt.scroll.y);
+            browser->GetMainFrame()->ExecuteJavaScript(
+                CefString("window.scrollTo(" + std::to_string(evt.scroll.x) + "," + std::to_string(evt.scroll.y) + ")"),
+                CefString(), 0);
+            break;
+
+        case ControlEventType::Resize:
+            std::printf("[CONTROL] Resize %ux%u\n", evt.resize.width, evt.resize.height);
+            Resize(evt.resize.width, evt.resize.height);
+            break;
+
+        case ControlEventType::SetMuted:
+            std::printf("[CONTROL] SetMuted=%d\n", (int)evt.flag.value);
+            host->SetAudioMuted(evt.flag.value);
+            break;
+
+        case ControlEventType::OpenDevTools:
+            std::printf("[CONTROL] OpenDevTools\n");
+            {
+                CefWindowInfo wi;
+                wi.SetAsPopup(nullptr, "DevTools");
+                host->ShowDevTools(wi, nullptr, CefBrowserSettings(), CefPoint());
+            }
+            break;
+
+        case ControlEventType::CloseDevTools:
+            std::printf("[CONTROL] CloseDevTools\n");
+            host->CloseDevTools();
+            break;
+
+        case ControlEventType::SetInputEnabled:
+            std::printf("[CONTROL] SetInputEnabled=%d\n", (int)evt.flag.value);
+            m_inputEnabled = evt.flag.value;
+            break;
+
+        case ControlEventType::ExecuteJS:
+            std::printf("[CONTROL] ExecuteJS\n");
+            browser->GetMainFrame()->ExecuteJavaScript(
+                CefString(evt.string.text), CefString(), 0);
+            break;
+
+        case ControlEventType::ClearCookies:
+            std::printf("[CONTROL] ClearCookies\n");
+            CefCookieManager::GetGlobalManager(nullptr)->DeleteCookies(
+                CefString(), CefString(), nullptr);
+            break;
+        }
+
         fflush(stdout);
     }
 }

@@ -10,7 +10,7 @@ find_package(CEF REQUIRED)
 
 add_subdirectory(${CEF_ROOT}/libcef_dll libcef_dll)
 
-add_executable(Host main.cpp simple_app.cpp osr_handler.cpp)
+add_executable(Host main.cpp simple_app.cpp osr_handler.cpp "shm/ControlBuffer.h")
 
 target_include_directories(Host PRIVATE ${CEF_ROOT})
 
