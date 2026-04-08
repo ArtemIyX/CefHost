@@ -4,6 +4,7 @@
 #include "shm/FrameBuffer.h"
 #include "shm/InputBuffer.h"
 #include <thread>
+#include <atomic>
 
 class OsrHandler : public CefClient, public CefLifeSpanHandler, public CefRenderHandler
 {
@@ -12,21 +13,24 @@ public:
     ~OsrHandler() = default;
 
     // CefClient
-    CefRefPtr<CefRenderHandler> GetRenderHandler() override { return this; }
+    CefRefPtr<CefRenderHandler>  GetRenderHandler()  override { return this; }
+    CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
 
     // CefRenderHandler
     void GetViewRect(CefRefPtr<CefBrowser> browser, CefRect& rect) override;
     void OnPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
         const RectList& dirty_rects, const void* buffer,
         int width, int height) override;
-    CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override;
-    void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
 
-    // Call from main loop to resize
+    // CefLifeSpanHandler
+    void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
+    void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
+
+    // Resize viewport and notify CEF.
     void Resize(uint32_t width, uint32_t height);
 
-    // Call from main loop to pump input → browser
-    void PumpInput(CefRefPtr<CefBrowser> browser);
+    // Drain input ring and forward events to CEF. Call from any thread.
+    void PumpInput();
 
     bool Init();
     void Shutdown();
@@ -34,14 +38,14 @@ public:
 private:
     void StartRenderLoop();
     void StopRenderLoop();
-private:
-    uint32_t    m_width;
-    uint32_t    m_height;
-    FrameBuffer m_frameBuffer;
-    InputBuffer m_inputBuffer;
+
+    uint32_t              m_width;
+    uint32_t              m_height;
+    FrameBuffer           m_frameBuffer;
+    InputBuffer           m_inputBuffer;
     CefRefPtr<CefBrowser> m_browser;
-    std::thread       m_renderThread;
-    std::atomic<bool> m_running{ false };
+    std::thread           m_renderThread;
+    std::atomic<bool>     m_running{ false };
 
     IMPLEMENT_REFCOUNTING(OsrHandler);
 };

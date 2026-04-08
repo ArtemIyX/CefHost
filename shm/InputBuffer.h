@@ -19,19 +19,25 @@ public:
         m_hEvent = CreateEventW(nullptr, FALSE, FALSE, EVT_INPUT_READY);
         if (!m_hEvent) return false;
 
-        memset(m_pRing, 0, sizeof(InputRingBuffer));
+        // Placement-initialize atomics inside the SHM region.
+        new (&m_pRing->write_index) std::atomic<uint32_t>(0);
+        new (&m_pRing->read_index)  std::atomic<uint32_t>(0);
         m_pRing->capacity = INPUT_RING_CAPACITY;
+        m_pRing->reserved = 0;
         return true;
     }
 
-    // Returns false if no event available
+    // Returns false if ring is empty.
     bool ReadEvent(InputEvent& out_event)
     {
         if (!m_pRing) return false;
-        if (m_pRing->read_index == m_pRing->write_index) return false;
 
-        out_event = m_pRing->events[m_pRing->read_index % INPUT_RING_CAPACITY];
-        m_pRing->read_index++;
+        const uint32_t r = m_pRing->read_index.load(std::memory_order_acquire);
+        const uint32_t w = m_pRing->write_index.load(std::memory_order_acquire);
+        if (r == w) return false;
+
+        out_event = m_pRing->events[r % INPUT_RING_CAPACITY];
+        m_pRing->read_index.store(r + 1, std::memory_order_release);
         return true;
     }
 

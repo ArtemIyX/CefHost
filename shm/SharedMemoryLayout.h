@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <atomic>
 
 constexpr uint32_t SHM_MAX_WIDTH = 3840;
 constexpr uint32_t SHM_MAX_HEIGHT = 2160;
@@ -18,11 +19,13 @@ struct FrameHeader
 {
     uint32_t width;
     uint32_t height;
-    uint32_t sequence; // incremented each frame
-    uint32_t reserved;
+    uint32_t sequence;   // incremented each frame
+    uint32_t write_slot; // 0 or 1 — which pixel buffer holds the latest complete frame
 };
 
-constexpr uint32_t SHM_FRAME_TOTAL = sizeof(FrameHeader) + SHM_FRAME_SIZE;
+// Layout: [FrameHeader][pixel buffer 0][pixel buffer 1]
+// Writer alternates slots; reader consumes write_slot after sequence changes.
+constexpr uint32_t SHM_FRAME_TOTAL = sizeof(FrameHeader) + SHM_FRAME_SIZE * 2;
 
 enum class InputEventType : uint8_t
 {
@@ -42,20 +45,21 @@ struct InputEvent
 
     union
     {
-        struct { int32_t x, y; uint8_t button; } mouse;
-        struct { int32_t x, y; float delta_x, delta_y; } scroll;
+        struct { int32_t x, y; uint8_t button; }                 mouse;
+        struct { int32_t x, y; float delta_x, delta_y; }         scroll;
         struct { uint32_t windows_key_code; uint32_t modifiers; } key;
-        struct { uint16_t character; } char_event;
+        struct { uint16_t character; }                            char_event;
     };
 };
 
+// std::atomic<uint32_t> is safe for cross-process SHM on x86/x64 (lock-free, same layout).
 struct InputRingBuffer
 {
-    uint32_t    write_index;
-    uint32_t    read_index;
-    uint32_t    capacity;
-    uint32_t    reserved;
-    InputEvent  events[INPUT_RING_CAPACITY];
+    std::atomic<uint32_t> write_index;
+    std::atomic<uint32_t> read_index;
+    uint32_t              capacity;
+    uint32_t              reserved;
+    InputEvent            events[INPUT_RING_CAPACITY];
 };
 
 #pragma pack(pop)

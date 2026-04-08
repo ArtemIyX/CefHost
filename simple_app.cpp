@@ -14,6 +14,6 @@ void SimpleApp::OnContextInitialized()
     browser_settings.windowless_frame_rate = 60;
 
     CefBrowserHost::CreateBrowser(
-        window_info, handler, "https://www.google.com",
+        window_info, handler, "https://testufo.com/",
         browser_settings, nullptr, nullptr);
 }

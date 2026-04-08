@@ -27,12 +27,21 @@ public:
         if (!m_pData) return;
 
         FrameHeader* header = reinterpret_cast<FrameHeader*>(m_pData);
+
+        // Write into the slot that is NOT currently being read.
+        const uint32_t writeSlot = 1u - (header->write_slot & 1u);
+
+        uint8_t* pixels = reinterpret_cast<uint8_t*>(m_pData) + sizeof(FrameHeader)
+            + static_cast<size_t>(writeSlot) * SHM_FRAME_SIZE;
+        memcpy(pixels, bgra_data, data_size);
+
+        // Commit: update dimensions and flip slot atomically-ish via sequence bump.
+        // Reader always checks sequence first, then reads write_slot.
         header->width = width;
         header->height = height;
+        header->write_slot = writeSlot;
+        _WriteBarrier();          // MSVC: prevent reorder before slot/dims are visible
         header->sequence++;
-
-        uint8_t* pixels = reinterpret_cast<uint8_t*>(m_pData) + sizeof(FrameHeader);
-        memcpy(pixels, bgra_data, data_size);
 
         SetEvent(m_hEvent);
     }

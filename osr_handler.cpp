@@ -28,9 +28,12 @@ void OsrHandler::StartRenderLoop()
         {
             while (m_running)
             {
-                if (m_browser)
-                    m_browser->GetHost()->Invalidate(PET_VIEW);
-                std::this_thread::sleep_for(std::chrono::milliseconds(16)); // ~60fps
+                // m_browser is set before StartRenderLoop() and cleared in OnBeforeClose()
+                // which only fires after CEF teardown — safe to read without lock here.
+                CefRefPtr<CefBrowser> browser = m_browser;
+                if (browser)
+                    browser->GetHost()->Invalidate(PET_VIEW);
+                std::this_thread::sleep_for(std::chrono::milliseconds(16)); // ~60 fps
             }
         });
 }
@@ -65,11 +68,6 @@ void OsrHandler::OnPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
     );
 }
 
-CefRefPtr<CefLifeSpanHandler> OsrHandler::GetLifeSpanHandler()
-{
-    return this;
-}
-
 void OsrHandler::OnAfterCreated(CefRefPtr<CefBrowser> browser)
 {
     m_browser = browser;
@@ -77,19 +75,32 @@ void OsrHandler::OnAfterCreated(CefRefPtr<CefBrowser> browser)
     StartRenderLoop();
 }
 
+void OsrHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser)
+{
+    // Stop the render loop before releasing the browser ref so the
+    // thread can't call Invalidate() on a destroyed host.
+    StopRenderLoop();
+    m_browser = nullptr;
+}
+
 void OsrHandler::Resize(uint32_t width, uint32_t height)
 {
     m_width = width;
     m_height = height;
+    if (m_browser)
+        m_browser->GetHost()->WasResized(); // triggers GetViewRect + repaint
 }
 
-void OsrHandler::PumpInput(CefRefPtr<CefBrowser> browser)
+void OsrHandler::PumpInput()
 {
+    CefRefPtr<CefBrowser> browser = m_browser;
+    if (!browser) return;
+
+    CefRefPtr<CefBrowserHost> host = browser->GetHost();
     InputEvent evt;
+
     while (m_inputBuffer.ReadEvent(evt))
     {
-        CefRefPtr<CefBrowserHost> host = browser->GetHost();
-
         switch (evt.type)
         {
         case InputEventType::MouseMove:
