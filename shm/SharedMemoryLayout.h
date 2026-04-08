@@ -72,6 +72,14 @@ enum class CefCursorType : uint8_t
     CT_NUM_VALUES,
 };
 
+enum class CefLoadState : uint8_t
+{
+    Idle = 0,
+    Loading = 1,
+    Ready = 2,
+    Error = 3,
+};
+
 struct FrameHeader
 {
     uint32_t      width;
@@ -79,7 +87,8 @@ struct FrameHeader
     uint32_t      sequence;    // incremented each frame
     uint32_t      write_slot;  // 0 or 1 - which pixel buffer holds the latest complete frame
     CefCursorType cursor_type; // updated by OnCursorChange, read by UE5
-    uint8_t       reserved[3];
+    CefLoadState  load_state;
+    uint8_t       reserved[2];
 };
 
 // Layout: [FrameHeader][pixel buffer 0][pixel buffer 1]

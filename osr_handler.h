@@ -7,7 +7,9 @@
 #include <thread>
 #include <atomic>
 
-class OsrHandler : public CefClient, public CefLifeSpanHandler, public CefRenderHandler, public CefContextMenuHandler, public CefDisplayHandler
+
+class OsrHandler : public CefClient, public CefLifeSpanHandler, public CefRenderHandler,
+    public CefContextMenuHandler, public CefDisplayHandler, public CefLoadHandler
 {
 public:
     OsrHandler(uint32_t width, uint32_t height);
@@ -18,10 +20,18 @@ public:
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
     CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override { return this; }
     CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
+    CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
 
+    // CefLoadHandler 
+    void OnLoadStart(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, TransitionType transition_type) override;
+    void OnLoadEnd(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, int http_status_code) override;
+    void OnLoadError(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, ErrorCode error_code, const CefString& error_text, const CefString& failed_url) override;
+
+    // CefDisplayHandler
     bool OnCursorChange(CefRefPtr<CefBrowser> browser,
         CefCursorHandle cursor,
         cef_cursor_type_t type,
+
         const CefCursorInfo& custom_cursor_info) override;
     // CefContextMenuHandler
     void OnBeforeContextMenu(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,

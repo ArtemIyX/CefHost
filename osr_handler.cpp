@@ -49,6 +49,28 @@ void OsrHandler::StopRenderLoop()
         m_renderThread.join();
 }
 
+void OsrHandler::OnLoadStart(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, TransitionType transition_type)
+{
+    if (!frame->IsMain()) return;
+    FrameHeader* header = m_frameBuffer.GetHeader();
+    if (header) header->load_state = CefLoadState::Loading;
+}
+
+void OsrHandler::OnLoadEnd(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, int http_status_code)
+{
+    if (!frame->IsMain()) return;
+    FrameHeader* header = m_frameBuffer.GetHeader();
+    if (header)
+        header->load_state = (http_status_code >= 400) ? CefLoadState::Error : CefLoadState::Ready;
+}
+
+void OsrHandler::OnLoadError(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, ErrorCode error_code, const CefString& error_text, const CefString& failed_url)
+{
+    if (!frame->IsMain()) return;
+    FrameHeader* header = m_frameBuffer.GetHeader();
+    if (header) header->load_state = CefLoadState::Error;
+}
+
 bool OsrHandler::OnCursorChange(CefRefPtr<CefBrowser> browser, CefCursorHandle cursor, cef_cursor_type_t type, const CefCursorInfo& custom_cursor_info)
 {
     FrameHeader* header = m_frameBuffer.GetHeader();
