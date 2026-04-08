@@ -6,7 +6,7 @@
 #include <thread>
 #include <atomic>
 
-class OsrHandler : public CefClient, public CefLifeSpanHandler, public CefRenderHandler
+class OsrHandler : public CefClient, public CefLifeSpanHandler, public CefRenderHandler, public CefContextMenuHandler
 {
 public:
     OsrHandler(uint32_t width, uint32_t height);
@@ -15,6 +15,15 @@ public:
     // CefClient
     CefRefPtr<CefRenderHandler>  GetRenderHandler()  override { return this; }
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
+    CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override { return this; }
+
+    // CefContextMenuHandler
+    void OnBeforeContextMenu(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
+        CefRefPtr<CefContextMenuParams> params,
+        CefRefPtr<CefMenuModel> model) override;
+
+    void OnPopupShow(CefRefPtr<CefBrowser> browser, bool show) override;
+    void OnPopupSize(CefRefPtr<CefBrowser> browser, const CefRect& rect) override;
 
     // CefRenderHandler
     void GetViewRect(CefRefPtr<CefBrowser> browser, CefRect& rect) override;
@@ -46,6 +55,10 @@ private:
     CefRefPtr<CefBrowser> m_browser;
     std::thread           m_renderThread;
     std::atomic<bool>     m_running{ false };
+
+    CefRect              m_popupRect;
+    std::vector<uint8_t> m_popupBuffer;
+    std::atomic<bool>    m_popupVisible{ false };
 
     IMPLEMENT_REFCOUNTING(OsrHandler);
 };
