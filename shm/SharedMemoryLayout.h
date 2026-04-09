@@ -43,15 +43,11 @@ struct FrameHeader
 	uint32_t      width;
 	uint32_t      height;
 	uint32_t      sequence;
-	uint32_t      write_slot;        // 0 or 1 — index of the last completed buffer UE should read
+	uint32_t      write_slot;
 	CefCursorType cursor_type;
 	CefLoadState  load_state;
 	uint8_t       reserved[2];
-	uint32_t      cef_pid;           // CEF process ID for handle duplication
-	uint32_t      reserved2;         // pad to 8-byte align
-	uint64_t      shared_handle[2];  // NT handle values for each buffer slot
 };
-
 // Pixel buffers kept for layout compat but unused in GPU path
 constexpr uint32_t SHM_FRAME_TOTAL = sizeof(FrameHeader) + SHM_FRAME_SIZE * 2;
 
