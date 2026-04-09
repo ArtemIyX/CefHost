@@ -1,372 +1,434 @@
-#include "osr_handler.h"
+#include "D3D11Device.h"
 #include "include/cef_browser.h"
+#include "include/cef_context_menu_handler.h"
+#include "include/cef_cookie.h"
+#include "include/cef_frame.h"
+#include "include/cef_load_handler.h"
+#include "include/cef_menu_model.h"
+#include "include/cef_render_handler.h"
+#include "include/internal/cef_ptr.h"
+#include "include/internal/cef_string.h"
+#include "include/internal/cef_types.h"
+#include "include/internal/cef_types_wrappers.h"
+#include "include/internal/cef_win.h"
+#include "osr_handler.h"
+#include "shm/SharedMemoryLayout.h"
+#include <chrono>
+#include <combaseapi.h>
+#include <cstdint>
 #include <cstdio>
+#include <d3d11.h>
+#include <dxgi1_2.h>
+#include <dxgiformat.h>
+#include <handleapi.h>
+#include <mutex>
+#include <string>
+#include <synchapi.h>
+#include <thread>
+#include <Windows.h>
+#include <wrl/client.h>
+
+
+extern D3D11Device g_D3D11Device;
 
 OsrHandler::OsrHandler(uint32_t width, uint32_t height)
-    : m_width(width), m_height(height)
+	: m_width(width), m_height(height)
 {
 }
 
 bool OsrHandler::Init()
 {
-    if (!m_frameBuffer.Init()) return false;
-    if (!m_inputBuffer.Init()) return false;
-    if (!m_controlBuffer.Init()) return false;
-    return true;
+	if (!m_frameBuffer.Init()) return false;
+	if (!m_inputBuffer.Init()) return false;
+	if (!m_controlBuffer.Init()) return false;
+
+	FrameHeader* header = m_frameBuffer.GetHeader();
+	if (header)
+		header->cef_pid = GetCurrentProcessId();
+
+	HRESULT hr = g_D3D11Device.GetDevice()->QueryInterface(IID_PPV_ARGS(&m_device1));
+	if (FAILED(hr))
+	{
+		fprintf(stderr, "[OsrHandler] QueryInterface ID3D11Device1 failed: 0x%08X\n", hr);
+		return false;
+	}
+	return true;
 }
 
 void OsrHandler::Shutdown()
 {
-    StopRenderLoop();
-    m_frameBuffer.Shutdown();
-    m_inputBuffer.Shutdown();
-    m_controlBuffer.Shutdown();
+	StopRenderLoop();
+
+	{
+		std::lock_guard<std::mutex> lock(m_textureMutex);
+		if (m_sharedNTHandle)
+		{
+			CloseHandle(m_sharedNTHandle);
+			m_sharedNTHandle = nullptr;
+		}
+		m_sharedTexture.Reset();
+	}
+
+	m_frameBuffer.Shutdown();
+	m_inputBuffer.Shutdown();
+	m_controlBuffer.Shutdown();
+}
+
+bool OsrHandler::EnsureSharedTexture(uint32_t width, uint32_t height)
+{
+	if (m_sharedTexture && m_sharedWidth == width && m_sharedHeight == height)
+		return true;
+
+	// Release old handle and texture
+	if (m_sharedNTHandle)
+	{
+		CloseHandle(m_sharedNTHandle);
+		m_sharedNTHandle = nullptr;
+	}
+	m_sharedTexture.Reset();
+
+	ID3D11Device* device = g_D3D11Device.GetDevice();
+	if (!device) return false;
+
+	D3D11_TEXTURE2D_DESC desc = {};
+	desc.Width = width;
+	desc.Height = height;
+	desc.MipLevels = 1;
+	desc.ArraySize = 1;
+	desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+	desc.SampleDesc.Count = 1;
+	desc.Usage = D3D11_USAGE_DEFAULT;
+	desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED;
+
+	HRESULT hr = device->CreateTexture2D(&desc, nullptr, &m_sharedTexture);
+	if (FAILED(hr))
+	{
+		fprintf(stderr, "[OsrHandler] CreateTexture2D (shared) failed: 0x%08X\n", hr);
+		return false;
+	}
+
+	// Export NT handle so UE can open it cross-process
+	ComPtr<IDXGIResource1> dxgiRes;
+	hr = m_sharedTexture.As(&dxgiRes);
+	if (FAILED(hr))
+	{
+		fprintf(stderr, "[OsrHandler] QueryInterface IDXGIResource1 failed: 0x%08X\n", hr);
+		m_sharedTexture.Reset();
+		return false;
+	}
+
+	hr = dxgiRes->CreateSharedHandle(
+		nullptr,
+		DXGI_SHARED_RESOURCE_READ,
+		nullptr,
+		&m_sharedNTHandle);
+	if (FAILED(hr))
+	{
+		fprintf(stderr, "[OsrHandler] CreateSharedHandle failed: 0x%08X\n", hr);
+		m_sharedTexture.Reset();
+		return false;
+	}
+
+	m_sharedWidth = width;
+	m_sharedHeight = height;
+
+	// Write handle into shared memory header so UE can pick it up
+	FrameHeader* header = m_frameBuffer.GetHeader();
+	if (header)
+	{
+		header->shared_texture_handle = reinterpret_cast<uint64_t>(m_sharedNTHandle);
+		header->width = width;
+		header->height = height;
+	}
+
+	fprintf(stdout, "[OsrHandler] Shared texture created %ux%u handle=%p\n",
+		width, height, m_sharedNTHandle);
+	return true;
+}
+
+void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
+	const RectList& dirtyRects, const CefAcceleratedPaintInfo& info)
+{
+	if (type != PET_VIEW) return;
+
+	ID3D11Device* device = g_D3D11Device.GetDevice();
+	ID3D11DeviceContext* context = g_D3D11Device.GetContext();
+	if (!device || !context) return;
+
+	ComPtr<ID3D11Texture2D> cefTexture;
+	HRESULT hr = m_device1->OpenSharedResource1(info.shared_texture_handle, IID_PPV_ARGS(&cefTexture));
+	if (FAILED(hr))
+	{
+		fprintf(stderr, "[OsrHandler] OpenSharedResource1 failed: 0x%08X\n", hr);
+		return;
+	}
+
+	D3D11_TEXTURE2D_DESC cefDesc;
+	cefTexture->GetDesc(&cefDesc);
+
+	std::lock_guard<std::mutex> lock(m_textureMutex);
+
+	if (!EnsureSharedTexture(cefDesc.Width, cefDesc.Height))
+		return;
+
+	context->CopyResource(m_sharedTexture.Get(), cefTexture.Get());
+	context->Flush();
+
+	FrameHeader* header = m_frameBuffer.GetHeader();
+	if (header)
+	{
+		header->sequence++;
+		SetEvent(m_frameBuffer.GetEvent());
+	}
+	fprintf(stdout, "[OsrHandler] OnAcceleratedPaint called\n");
+	fflush(stdout);
 }
 
 void OsrHandler::StartRenderLoop()
 {
-    m_running = true;
-    m_renderThread = std::thread([this]()
-        {
-            while (m_running)
-            {
-                // m_browser is set before StartRenderLoop() and cleared in OnBeforeClose()
-                // which only fires after CEF teardown — safe to read without lock here.
-                CefRefPtr<CefBrowser> browser = m_browser;
-                if (browser && !m_paused)
-                {
-                    browser->GetHost()->Invalidate(PET_VIEW);
-                    PumpInput();
-                }
-                PumpControl();
-                std::this_thread::sleep_for(std::chrono::milliseconds(16)); // ~60 fps
-            }
-        });
+	m_running = true;
+	m_renderThread = std::thread([this]()
+		{
+			while (m_running)
+			{
+				CefRefPtr<CefBrowser> browser = m_browser;
+				if (browser && !m_paused)
+				{
+					browser->GetHost()->Invalidate(PET_VIEW);
+				}
+				std::this_thread::sleep_for(std::chrono::milliseconds(16));
+			}
+		});
+	m_controlThread = std::thread([this]()
+		{
+			while (m_running)
+			{
+				WaitForSingleObject(m_inputBuffer.GetEvent(), 100);
+				PumpControl();
+			}
+		});
+
+	m_inputThread = std::thread([this]()
+		{
+			while (m_running)
+			{
+				WaitForSingleObject(m_controlBuffer.GetEvent(), 100);
+				PumpInput();
+			}
+		});
 }
 
 void OsrHandler::StopRenderLoop()
 {
-    m_running = false;
-    if (m_renderThread.joinable())
-        m_renderThread.join();
+	m_running = false;
+
+	SetEvent(m_inputBuffer.GetEvent());
+	SetEvent(m_controlBuffer.GetEvent());
+
+	if (m_renderThread.joinable())
+		m_renderThread.join();
+	if (m_controlThread.joinable())
+		m_controlThread.join();
+	if (m_inputThread.joinable())
+		m_inputThread.join();
 }
 
 void OsrHandler::OnLoadStart(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, TransitionType transition_type)
 {
-    if (!frame->IsMain()) return;
-    FrameHeader* header = m_frameBuffer.GetHeader();
-    if (header) header->load_state = CefLoadState::Loading;
+	if (!frame->IsMain()) return;
+	FrameHeader* header = m_frameBuffer.GetHeader();
+	if (header) header->load_state = CefLoadState::Loading;
 }
 
 void OsrHandler::OnLoadEnd(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, int http_status_code)
 {
-    if (!frame->IsMain()) return;
-    FrameHeader* header = m_frameBuffer.GetHeader();
-    if (header)
-        header->load_state = (http_status_code >= 400) ? CefLoadState::Error : CefLoadState::Ready;
+	if (!frame->IsMain()) return;
+	FrameHeader* header = m_frameBuffer.GetHeader();
+	if (header)
+		header->load_state = (http_status_code >= 400) ? CefLoadState::Error : CefLoadState::Ready;
 }
 
 void OsrHandler::OnLoadError(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, ErrorCode error_code, const CefString& error_text, const CefString& failed_url)
 {
-    if (!frame->IsMain()) return;
-    FrameHeader* header = m_frameBuffer.GetHeader();
-    if (header) header->load_state = CefLoadState::Error;
+	if (!frame->IsMain()) return;
+	FrameHeader* header = m_frameBuffer.GetHeader();
+	if (header) header->load_state = CefLoadState::Error;
 }
 
-bool OsrHandler::OnCursorChange(CefRefPtr<CefBrowser> browser, CefCursorHandle cursor, cef_cursor_type_t type, const CefCursorInfo& custom_cursor_info)
+bool OsrHandler::OnCursorChange(CefRefPtr<CefBrowser> browser, CefCursorHandle cursor,
+	cef_cursor_type_t type, const CefCursorInfo& custom_cursor_info)
 {
-    FrameHeader* header = m_frameBuffer.GetHeader();
-    if (header)
-        header->cursor_type = static_cast<CefCursorType>(type);
-    return true;
+	FrameHeader* header = m_frameBuffer.GetHeader();
+	if (header)
+		header->cursor_type = static_cast<CefCursorType>(type);
+	return true;
 }
 
-void OsrHandler::OnBeforeContextMenu(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, CefRefPtr<CefContextMenuParams> params, CefRefPtr<CefMenuModel> model)
+void OsrHandler::OnBeforeContextMenu(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
+	CefRefPtr<CefContextMenuParams> params, CefRefPtr<CefMenuModel> model)
 {
-
+	model->Clear();
 }
 
 void OsrHandler::OnPopupShow(CefRefPtr<CefBrowser> browser, bool show)
 {
-    m_popupVisible = show;
-    if (!show)
-    {
-        m_popupBuffer.clear();
-        m_popupRect = {};
-    }
+	m_popupVisible = show;
+	if (!show)
+	{
+		m_popupBuffer.clear();
+		m_popupRect = {};
+	}
 }
 
 void OsrHandler::OnPopupSize(CefRefPtr<CefBrowser> browser, const CefRect& rect)
 {
-    m_popupRect = rect;
+	m_popupRect = rect;
 }
 
 void OsrHandler::GetViewRect(CefRefPtr<CefBrowser> browser, CefRect& rect)
 {
-    rect = CefRect(0, 0, static_cast<int>(m_width), static_cast<int>(m_height));
-}
-
-void OsrHandler::OnPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
-    const RectList& dirty_rects, const void* buffer,
-    int width, int height)
-{
-    if (type == PET_POPUP)
-    {
-        const size_t size = static_cast<size_t>(width) * height * 4;
-        m_popupBuffer.assign(static_cast<const uint8_t*>(buffer),
-            static_cast<const uint8_t*>(buffer) + size);
-        return;
-    }
-
-    // PET_VIEW — copy main frame then composite popup on top
-    const size_t viewSize = static_cast<size_t>(width) * height * 4;
-    std::vector<uint8_t> composite(static_cast<const uint8_t*>(buffer),
-        static_cast<const uint8_t*>(buffer) + viewSize);
-
-    if (m_popupVisible && !m_popupBuffer.empty())
-    {
-        const int popW = m_popupRect.width;
-        const int popH = m_popupRect.height;
-        const int popX = m_popupRect.x;
-        const int popY = m_popupRect.y;
-
-        for (int row = 0; row < popH; ++row)
-        {
-            const int dstY = popY + row;
-            if (dstY < 0 || dstY >= height) continue;
-
-            const int srcOffset = row * popW * 4;
-            const int dstOffset = (dstY * width + popX) * 4;
-            const int copyBytes = std::min(popW, width - popX) * 4;
-            if (copyBytes <= 0) continue;
-
-            std::memcpy(composite.data() + dstOffset,
-                m_popupBuffer.data() + srcOffset,
-                copyBytes);
-        }
-    }
-
-   /* std::printf("[OSR] OnPaint: %dx%d popup=%s\n", width, height,
-        m_popupVisible ? "yes" : "no");
-    fflush(stdout);*/
-
-    m_frameBuffer.WriteFrame(
-        static_cast<uint32_t>(width),
-        static_cast<uint32_t>(height),
-        composite.data(),
-        composite.size()
-    );
+	rect = CefRect(0, 0, static_cast<int>(m_width), static_cast<int>(m_height));
 }
 
 void OsrHandler::OnAfterCreated(CefRefPtr<CefBrowser> browser)
 {
-    m_browser = browser;
-    browser->GetHost()->SetFocus(true);
-    StartRenderLoop();
+	m_browser = browser;
+	browser->GetHost()->SetFocus(true);
+	StartRenderLoop();
 }
 
 void OsrHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser)
 {
-    // Stop the render loop before releasing the browser ref so the
-    // thread can't call Invalidate() on a destroyed host.
-    StopRenderLoop();
-    m_browser = nullptr;
+	StopRenderLoop();
+	m_browser = nullptr;
 }
 
 void OsrHandler::Resize(uint32_t width, uint32_t height)
 {
-    m_width = width;
-    m_height = height;
-    if (m_browser)
-        m_browser->GetHost()->WasResized(); // triggers GetViewRect + repaint
+	m_width = width;
+	m_height = height;
+	if (m_browser)
+		m_browser->GetHost()->WasResized();
 }
 
 void OsrHandler::PumpInput()
 {
-    CefRefPtr<CefBrowser> browser = m_browser;
-    if (!browser) return;
-    CefRefPtr<CefBrowserHost> host = browser->GetHost();
-    InputEvent evt;
-    while (m_inputBuffer.ReadEvent(evt))
-    {
-        if (!m_inputEnabled) continue;
+	CefRefPtr<CefBrowser> browser = m_browser;
+	if (!browser) return;
+	CefRefPtr<CefBrowserHost> host = browser->GetHost();
+	InputEvent evt;
+	while (m_inputBuffer.ReadEvent(evt))
+	{
+		if (!m_inputEnabled) continue;
 
-        switch (evt.type)
-        {
-        case InputEventType::MouseMove:
-        {
-            CefMouseEvent mouse_evt;
-            mouse_evt.x = evt.mouse.x;
-            mouse_evt.y = evt.mouse.y;
-            std::printf("[INPUT] MouseMove x=%d y=%d\n", mouse_evt.x, mouse_evt.y);
-            host->SendMouseMoveEvent(mouse_evt, false);
-            break;
-        }
-        case InputEventType::MouseDown:
-        case InputEventType::MouseUp:
-        {
-            CefMouseEvent mouse_evt;
-            mouse_evt.x = evt.mouse.x;
-            mouse_evt.y = evt.mouse.y;
-            const bool is_up = (evt.type == InputEventType::MouseUp);
-            const auto btn = static_cast<CefBrowserHost::MouseButtonType>(evt.mouse.button);
-            std::printf("[INPUT] Mouse%s x=%d y=%d btn=%d\n",
-                is_up ? "Up" : "Down", mouse_evt.x, mouse_evt.y, static_cast<int>(btn));
-            host->SendMouseClickEvent(mouse_evt, btn, is_up, 1);
-            break;
-        }
-        case InputEventType::MouseScroll:
-        {
-            CefMouseEvent mouse_evt;
-            mouse_evt.x = evt.scroll.x;
-            mouse_evt.y = evt.scroll.y;
-            std::printf("[INPUT] MouseScroll x=%d y=%d dx=%.1f dy=%.1f\n",
-                mouse_evt.x, mouse_evt.y, evt.scroll.delta_x, evt.scroll.delta_y);
-            host->SendMouseWheelEvent(mouse_evt,
-                static_cast<int>(evt.scroll.delta_x),
-                static_cast<int>(evt.scroll.delta_y));
-            break;
-        }
-        case InputEventType::KeyDown:
-        case InputEventType::KeyUp:
-        {
-            CefKeyEvent key_evt;
-            key_evt.type = (evt.type == InputEventType::KeyDown)
-                ? KEYEVENT_RAWKEYDOWN : KEYEVENT_KEYUP;
-            key_evt.windows_key_code = static_cast<int>(evt.key.windows_key_code);
-            key_evt.modifiers = evt.key.modifiers;
-            std::printf("[INPUT] Key%s vk=0x%X mods=0x%X\n",
-                evt.type == InputEventType::KeyDown ? "Down" : "Up",
-                key_evt.windows_key_code, key_evt.modifiers);
-            host->SendKeyEvent(key_evt);
-            break;
-        }
-        case InputEventType::KeyChar:
-        {
-            CefKeyEvent key_evt;
-            key_evt.type = KEYEVENT_CHAR;
-            key_evt.windows_key_code = evt.char_event.character;
-            std::printf("[INPUT] KeyChar char=0x%X ('%c')\n",
-                evt.char_event.character,
-                evt.char_event.character >= 32 ? static_cast<char>(evt.char_event.character) : '?');
-            host->SendKeyEvent(key_evt);
-            break;
-        }
-        }
-        fflush(stdout);
-    }
+		switch (evt.type)
+		{
+		case InputEventType::MouseMove:
+		{
+			CefMouseEvent mouse_evt;
+			mouse_evt.x = evt.mouse.x;
+			mouse_evt.y = evt.mouse.y;
+			host->SendMouseMoveEvent(mouse_evt, false);
+			break;
+		}
+		case InputEventType::MouseDown:
+		case InputEventType::MouseUp:
+		{
+			CefMouseEvent mouse_evt;
+			mouse_evt.x = evt.mouse.x;
+			mouse_evt.y = evt.mouse.y;
+			const bool is_up = (evt.type == InputEventType::MouseUp);
+			const auto btn = static_cast<CefBrowserHost::MouseButtonType>(evt.mouse.button);
+			host->SendMouseClickEvent(mouse_evt, btn, is_up, 1);
+			break;
+		}
+		case InputEventType::MouseScroll:
+		{
+			CefMouseEvent mouse_evt;
+			mouse_evt.x = evt.scroll.x;
+			mouse_evt.y = evt.scroll.y;
+			host->SendMouseWheelEvent(mouse_evt,
+				static_cast<int>(evt.scroll.delta_x),
+				static_cast<int>(evt.scroll.delta_y));
+			break;
+		}
+		case InputEventType::KeyDown:
+		case InputEventType::KeyUp:
+		{
+			CefKeyEvent key_evt;
+			key_evt.type = (evt.type == InputEventType::KeyDown)
+				? KEYEVENT_RAWKEYDOWN : KEYEVENT_KEYUP;
+			key_evt.windows_key_code = static_cast<int>(evt.key.windows_key_code);
+			key_evt.modifiers = evt.key.modifiers;
+			host->SendKeyEvent(key_evt);
+			break;
+		}
+		case InputEventType::KeyChar:
+		{
+			CefKeyEvent key_evt;
+			key_evt.type = KEYEVENT_CHAR;
+			key_evt.windows_key_code = evt.char_event.character;
+			host->SendKeyEvent(key_evt);
+			break;
+		}
+		}
+	}
 }
 
 void OsrHandler::PumpControl()
 {
-    CefRefPtr<CefBrowser> browser = m_browser;
-    if (!browser) return;
-    CefRefPtr<CefBrowserHost> host = browser->GetHost();
+	CefRefPtr<CefBrowser> browser = m_browser;
+	if (!browser) return;
+	CefRefPtr<CefBrowserHost> host = browser->GetHost();
 
-    ControlEvent evt;
-    while (m_controlBuffer.ReadEvent(evt))
-    {
-        switch (evt.type)
-        {
-        case ControlEventType::GoBack:
-            std::printf("[CONTROL] GoBack\n");
-            browser->GoBack();
-            break;
-
-        case ControlEventType::GoForward:
-            std::printf("[CONTROL] GoForward\n");
-            browser->GoForward();
-            break;
-
-        case ControlEventType::StopLoad:
-            std::printf("[CONTROL] StopLoad\n");
-            browser->StopLoad();
-            break;
-
-        case ControlEventType::Reload:
-            std::printf("[CONTROL] Reload\n");
-            browser->Reload();
-            break;
-
-        case ControlEventType::SetURL:
-            std::printf("[CONTROL] SetURL\n");
-            browser->GetMainFrame()->LoadURL(CefString(evt.string.text));
-            break;
-
-        case ControlEventType::SetPaused:
-            std::printf("[CONTROL] SetPaused=%d\n", (int)evt.flag.value);
-            m_paused = evt.flag.value;
-            break;
-
-        case ControlEventType::SetHidden:
-            std::printf("[CONTROL] SetHidden=%d\n", (int)evt.flag.value);
-            host->WasHidden(evt.flag.value);
-            break;
-
-        case ControlEventType::SetFocus:
-            std::printf("[CONTROL] SetFocus=%d\n", (int)evt.flag.value);
-            host->SetFocus(evt.flag.value);
-            break;
-
-        case ControlEventType::SetZoomLevel:
-            std::printf("[CONTROL] SetZoomLevel=%.2f\n", evt.zoom.value);
-            host->SetZoomLevel(static_cast<double>(evt.zoom.value));
-            break;
-
-        case ControlEventType::SetFrameRate:
-            std::printf("[CONTROL] SetFrameRate=%u\n", evt.frame_rate.value);
-            host->SetWindowlessFrameRate(static_cast<int>(evt.frame_rate.value));
-            break;
-
-        case ControlEventType::ScrollTo:
-            std::printf("[CONTROL] ScrollTo x=%d y=%d\n", evt.scroll.x, evt.scroll.y);
-            browser->GetMainFrame()->ExecuteJavaScript(
-                CefString("window.scrollTo(" + std::to_string(evt.scroll.x) + "," + std::to_string(evt.scroll.y) + ")"),
-                CefString(), 0);
-            break;
-
-        case ControlEventType::Resize:
-            std::printf("[CONTROL] Resize %ux%u\n", evt.resize.width, evt.resize.height);
-            Resize(evt.resize.width, evt.resize.height);
-            break;
-
-        case ControlEventType::SetMuted:
-            std::printf("[CONTROL] SetMuted=%d\n", (int)evt.flag.value);
-            host->SetAudioMuted(evt.flag.value);
-            break;
-
-        case ControlEventType::OpenDevTools:
-            std::printf("[CONTROL] OpenDevTools\n");
-            {
-                CefWindowInfo wi;
-                wi.SetAsPopup(nullptr, "DevTools");
-                host->ShowDevTools(wi, nullptr, CefBrowserSettings(), CefPoint());
-            }
-            break;
-
-        case ControlEventType::CloseDevTools:
-            std::printf("[CONTROL] CloseDevTools\n");
-            host->CloseDevTools();
-            break;
-
-        case ControlEventType::SetInputEnabled:
-            std::printf("[CONTROL] SetInputEnabled=%d\n", (int)evt.flag.value);
-            m_inputEnabled = evt.flag.value;
-            break;
-
-        case ControlEventType::ExecuteJS:
-            std::printf("[CONTROL] ExecuteJS\n");
-            browser->GetMainFrame()->ExecuteJavaScript(
-                CefString(evt.string.text), CefString(), 0);
-            break;
-
-        case ControlEventType::ClearCookies:
-            std::printf("[CONTROL] ClearCookies\n");
-            CefCookieManager::GetGlobalManager(nullptr)->DeleteCookies(
-                CefString(), CefString(), nullptr);
-            break;
-        }
-
-        fflush(stdout);
-    }
+	ControlEvent evt;
+	while (m_controlBuffer.ReadEvent(evt))
+	{
+		switch (evt.type)
+		{
+		case ControlEventType::GoBack:      browser->GoBack();      break;
+		case ControlEventType::GoForward:   browser->GoForward();   break;
+		case ControlEventType::StopLoad:    browser->StopLoad();    break;
+		case ControlEventType::Reload:      browser->Reload();      break;
+		case ControlEventType::SetURL:
+			browser->GetMainFrame()->LoadURL(CefString(evt.string.text));
+			break;
+		case ControlEventType::SetPaused:   m_paused = evt.flag.value;          break;
+		case ControlEventType::SetHidden:   host->WasHidden(evt.flag.value);    break;
+		case ControlEventType::SetFocus:    host->SetFocus(evt.flag.value);     break;
+		case ControlEventType::SetZoomLevel:
+			host->SetZoomLevel(static_cast<double>(evt.zoom.value));
+			break;
+		case ControlEventType::SetFrameRate:
+			host->SetWindowlessFrameRate(static_cast<int>(evt.frame_rate.value));
+			break;
+		case ControlEventType::ScrollTo:
+			browser->GetMainFrame()->ExecuteJavaScript(
+				CefString("window.scrollTo(" + std::to_string(evt.scroll.x) + "," + std::to_string(evt.scroll.y) + ")"),
+				CefString(), 0);
+			break;
+		case ControlEventType::Resize:
+			Resize(evt.resize.width, evt.resize.height);
+			break;
+		case ControlEventType::SetMuted:    host->SetAudioMuted(evt.flag.value); break;
+		case ControlEventType::OpenDevTools:
+		{
+			CefWindowInfo wi;
+			wi.SetAsPopup(nullptr, "DevTools");
+			host->ShowDevTools(wi, nullptr, CefBrowserSettings(), CefPoint());
+		}
+		break;
+		case ControlEventType::CloseDevTools:   host->CloseDevTools();          break;
+		case ControlEventType::SetInputEnabled: m_inputEnabled = evt.flag.value; break;
+		case ControlEventType::ExecuteJS:
+			browser->GetMainFrame()->ExecuteJavaScript(
+				CefString(evt.string.text), CefString(), 0);
+			break;
+		case ControlEventType::ClearCookies:
+			CefCookieManager::GetGlobalManager(nullptr)->DeleteCookies(
+				CefString(), CefString(), nullptr);
+			break;
+		}
+	}
 }

@@ -10,13 +10,16 @@ find_package(CEF REQUIRED)
 
 add_subdirectory(${CEF_ROOT}/libcef_dll libcef_dll)
 
-add_executable(Host main.cpp simple_app.cpp osr_handler.cpp "shm/ControlBuffer.h")
+add_executable(Host main.cpp simple_app.cpp osr_handler.cpp "shm/ControlBuffer.h" "D3D11Device.h")
 
 target_include_directories(Host PRIVATE ${CEF_ROOT})
 
 target_link_libraries(Host
     libcef_dll_wrapper
     ${CEF_STANDARD_LIBS}
+    d3d11.lib
+    dxgi.lib
+    dxguid.lib
 )
 
 set(CEF_BINARY_DIR "$<IF:$<CONFIG:Debug>,${CEF_ROOT}/Debug,${CEF_ROOT}/Release>")

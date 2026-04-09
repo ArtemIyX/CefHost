@@ -16,10 +16,7 @@ constexpr const wchar_t* EVT_INPUT_READY = L"CEFHost_InputReady";
 constexpr const wchar_t* SHM_CONTROL_NAME = L"CEFHost_Control";
 constexpr const wchar_t* EVT_CONTROL_READY = L"CEFHost_ControlReady";
 
-#pragma pack(push, 1)
 
-// Mirrors cef_cursor_type_t values we care about.
-// Values match CEF enum so casting is safe.
 enum class CefCursorType : uint8_t
 {
 	CT_POINTER,
@@ -83,18 +80,24 @@ enum class CefLoadState : uint8_t
 	Error = 3,
 };
 
+#pragma pack(push, 1)
 struct FrameHeader
 {
 	uint32_t      width;
 	uint32_t      height;
-	uint32_t      sequence;    // incremented each frame
-	uint32_t      write_slot;  // 0 or 1 - which pixel buffer holds the latest complete frame
-	CefCursorType cursor_type; // updated by OnCursorChange, read by UE5
+	uint32_t      sequence;
+	uint32_t      write_slot;
+	CefCursorType cursor_type;
 	CefLoadState  load_state;
 	uint8_t       reserved[2];
+	uint32_t      cef_pid;
+	uint32_t      reserved2;        // pad to keep uint64 aligned
+	uint64_t      shared_texture_handle;
 };
+#pragma pack(pop)
 
-// Layout: [FrameHeader][pixel buffer 0][pixel buffer 1]
+// Pixel buffers no longer used in GPU path but kept so FrameBuffer.h still compiles.
+// UE side should ignore pixel data when shared_texture_handle != 0.
 constexpr uint32_t SHM_FRAME_TOTAL = sizeof(FrameHeader) + SHM_FRAME_SIZE * 2;
 
 enum class InputEventType : uint8_t
@@ -122,7 +125,6 @@ struct InputEvent
 	};
 };
 
-// std::atomic<uint32_t> is safe for cross-process SHM on x86/x64 (lock-free, same layout).
 struct InputRingBuffer
 {
 	std::atomic<uint32_t> write_index;
@@ -134,14 +136,11 @@ struct InputRingBuffer
 
 enum class ControlEventType : uint8_t
 {
-	// Navigation
 	GoBack = 0,
 	GoForward = 1,
 	StopLoad = 2,
 	Reload = 3,
 	SetURL = 4,
-
-	// View
 	SetPaused = 5,
 	SetHidden = 6,
 	SetFocus = 7,
@@ -149,21 +148,11 @@ enum class ControlEventType : uint8_t
 	SetFrameRate = 9,
 	ScrollTo = 10,
 	Resize = 11,
-
-	// Audio
 	SetMuted = 12,
-
-	// Dev
 	OpenDevTools = 13,
 	CloseDevTools = 14,
-
-	// Input
 	SetInputEnabled = 15,
-
-	// JS
 	ExecuteJS = 16,
-
-	// Storage
 	ClearCookies = 17,
 };
 
@@ -176,12 +165,12 @@ struct ControlEvent
 
 	union
 	{
-		struct { uint32_t width; uint32_t height; }      resize;
-		struct { int32_t  x;    int32_t  y; }            scroll;
-		struct { float    value; }                        zoom;
-		struct { uint32_t value; }                        frame_rate;
-		struct { bool     value; }                        flag;
-		struct { char16_t text[CONTROL_STRING_MAX]; }    string; // SetURL + ExecuteJS
+		struct { uint32_t width; uint32_t height; }   resize;
+		struct { int32_t  x;    int32_t  y; }         scroll;
+		struct { float    value; }                     zoom;
+		struct { uint32_t value; }                     frame_rate;
+		struct { bool     value; }                     flag;
+		struct { char16_t text[CONTROL_STRING_MAX]; } string;
 	};
 };
 
@@ -194,4 +183,3 @@ struct ControlRingBuffer
 	ControlEvent          events[CONTROL_RING_CAPACITY];
 };
 
-#pragma pack(pop)

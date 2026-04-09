@@ -59,6 +59,7 @@ public:
     {
         return reinterpret_cast<FrameHeader*>(m_pData);
     }
+    HANDLE GetEvent() const {return m_hEvent;}
 private:
     HANDLE m_hMap = nullptr;
     HANDLE m_hEvent = nullptr;
