@@ -4,7 +4,7 @@
 
 constexpr uint32_t SHM_MAX_WIDTH = 3840;
 constexpr uint32_t SHM_MAX_HEIGHT = 2160;
-constexpr uint32_t SHM_FRAME_SIZE = SHM_MAX_WIDTH * SHM_MAX_HEIGHT * 4; // BGRA
+constexpr uint32_t SHM_FRAME_SIZE = SHM_MAX_WIDTH * SHM_MAX_HEIGHT * 4;
 
 constexpr uint32_t INPUT_RING_CAPACITY = 256;
 constexpr uint32_t CONTROL_RING_CAPACITY = 64;
@@ -15,107 +15,56 @@ constexpr const wchar_t* EVT_FRAME_READY = L"CEFHost_FrameReady";
 constexpr const wchar_t* EVT_INPUT_READY = L"CEFHost_InputReady";
 constexpr const wchar_t* SHM_CONTROL_NAME = L"CEFHost_Control";
 constexpr const wchar_t* EVT_CONTROL_READY = L"CEFHost_ControlReady";
-
+constexpr const wchar_t* EVT_SHUTDOWN = L"CEFHost_Shutdown";
 
 enum class CefCursorType : uint8_t
 {
-	CT_POINTER,
-	CT_CROSS,
-	CT_HAND,
-	CT_IBEAM,
-	CT_WAIT,
-	CT_HELP,
-	CT_EASTRESIZE,
-	CT_NORTHRESIZE,
-	CT_NORTHEASTRESIZE,
-	CT_NORTHWESTRESIZE,
-	CT_SOUTHRESIZE,
-	CT_SOUTHEASTRESIZE,
-	CT_SOUTHWESTRESIZE,
-	CT_WESTRESIZE,
-	CT_NORTHSOUTHRESIZE,
-	CT_EASTWESTRESIZE,
-	CT_NORTHEASTSOUTHWESTRESIZE,
-	CT_NORTHWESTSOUTHEASTRESIZE,
-	CT_COLUMNRESIZE,
-	CT_ROWRESIZE,
-	CT_MIDDLEPANNING,
-	CT_EASTPANNING,
-	CT_NORTHPANNING,
-	CT_NORTHEASTPANNING,
-	CT_NORTHWESTPANNING,
-	CT_SOUTHPANNING,
-	CT_SOUTHEASTPANNING,
-	CT_SOUTHWESTPANNING,
-	CT_WESTPANNING,
-	CT_MOVE,
-	CT_VERTICALTEXT,
-	CT_CELL,
-	CT_CONTEXTMENU,
-	CT_ALIAS,
-	CT_PROGRESS,
-	CT_NODROP,
-	CT_COPY,
-	CT_NONE,
-	CT_NOTALLOWED,
-	CT_ZOOMIN,
-	CT_ZOOMOUT,
-	CT_GRAB,
-	CT_GRABBING,
-	CT_MIDDLE_PANNING_VERTICAL,
-	CT_MIDDLE_PANNING_HORIZONTAL,
-	CT_CUSTOM,
-	CT_DND_NONE,
-	CT_DND_MOVE,
-	CT_DND_COPY,
-	CT_DND_LINK,
-	CT_NUM_VALUES,
+	CT_POINTER, CT_CROSS, CT_HAND, CT_IBEAM, CT_WAIT, CT_HELP,
+	CT_EASTRESIZE, CT_NORTHRESIZE, CT_NORTHEASTRESIZE, CT_NORTHWESTRESIZE,
+	CT_SOUTHRESIZE, CT_SOUTHEASTRESIZE, CT_SOUTHWESTRESIZE, CT_WESTRESIZE,
+	CT_NORTHSOUTHRESIZE, CT_EASTWESTRESIZE, CT_NORTHEASTSOUTHWESTRESIZE,
+	CT_NORTHWESTSOUTHEASTRESIZE, CT_COLUMNRESIZE, CT_ROWRESIZE,
+	CT_MIDDLEPANNING, CT_EASTPANNING, CT_NORTHPANNING, CT_NORTHEASTPANNING,
+	CT_NORTHWESTPANNING, CT_SOUTHPANNING, CT_SOUTHEASTPANNING,
+	CT_SOUTHWESTPANNING, CT_WESTPANNING, CT_MOVE, CT_VERTICALTEXT, CT_CELL,
+	CT_CONTEXTMENU, CT_ALIAS, CT_PROGRESS, CT_NODROP, CT_COPY, CT_NONE,
+	CT_NOTALLOWED, CT_ZOOMIN, CT_ZOOMOUT, CT_GRAB, CT_GRABBING,
+	CT_MIDDLE_PANNING_VERTICAL, CT_MIDDLE_PANNING_HORIZONTAL,
+	CT_CUSTOM, CT_DND_NONE, CT_DND_MOVE, CT_DND_COPY, CT_DND_LINK, CT_NUM_VALUES,
 };
 
 enum class CefLoadState : uint8_t
 {
-	Idle = 0,
-	Loading = 1,
-	Ready = 2,
-	Error = 3,
+	Idle = 0, Loading = 1, Ready = 2, Error = 3,
 };
 
-#pragma pack(push, 1)
 struct FrameHeader
 {
 	uint32_t      width;
 	uint32_t      height;
 	uint32_t      sequence;
-	uint32_t      write_slot;
+	uint32_t      write_slot;        // 0 or 1 — index of the last completed buffer UE should read
 	CefCursorType cursor_type;
 	CefLoadState  load_state;
 	uint8_t       reserved[2];
-	uint32_t      cef_pid;
-	uint32_t      reserved2;        // pad to keep uint64 aligned
-	uint64_t      shared_texture_handle;
+	uint32_t      cef_pid;           // CEF process ID for handle duplication
+	uint32_t      reserved2;         // pad to 8-byte align
+	uint64_t      shared_handle[2];  // NT handle values for each buffer slot
 };
-#pragma pack(pop)
 
-// Pixel buffers no longer used in GPU path but kept so FrameBuffer.h still compiles.
-// UE side should ignore pixel data when shared_texture_handle != 0.
+// Pixel buffers kept for layout compat but unused in GPU path
 constexpr uint32_t SHM_FRAME_TOTAL = sizeof(FrameHeader) + SHM_FRAME_SIZE * 2;
 
 enum class InputEventType : uint8_t
 {
-	MouseMove = 0,
-	MouseDown = 1,
-	MouseUp = 2,
-	MouseScroll = 3,
-	KeyDown = 4,
-	KeyUp = 5,
-	KeyChar = 6,
+	MouseMove = 0, MouseDown = 1, MouseUp = 2, MouseScroll = 3,
+	KeyDown = 4, KeyUp = 5, KeyChar = 6,
 };
 
 struct InputEvent
 {
 	InputEventType type;
 	uint8_t        reserved[3];
-
 	union
 	{
 		struct { int32_t x, y; uint8_t button; }                 mouse;
@@ -136,24 +85,11 @@ struct InputRingBuffer
 
 enum class ControlEventType : uint8_t
 {
-	GoBack = 0,
-	GoForward = 1,
-	StopLoad = 2,
-	Reload = 3,
-	SetURL = 4,
-	SetPaused = 5,
-	SetHidden = 6,
-	SetFocus = 7,
-	SetZoomLevel = 8,
-	SetFrameRate = 9,
-	ScrollTo = 10,
-	Resize = 11,
-	SetMuted = 12,
-	OpenDevTools = 13,
-	CloseDevTools = 14,
-	SetInputEnabled = 15,
-	ExecuteJS = 16,
-	ClearCookies = 17,
+	GoBack = 0, GoForward = 1, StopLoad = 2, Reload = 3, SetURL = 4,
+	SetPaused = 5, SetHidden = 6, SetFocus = 7, SetZoomLevel = 8,
+	SetFrameRate = 9, ScrollTo = 10, Resize = 11, SetMuted = 12,
+	OpenDevTools = 13, CloseDevTools = 14, SetInputEnabled = 15,
+	ExecuteJS = 16, ClearCookies = 17,
 };
 
 constexpr uint32_t CONTROL_STRING_MAX = 2048;
@@ -162,7 +98,6 @@ struct ControlEvent
 {
 	ControlEventType type;
 	uint8_t          reserved[3];
-
 	union
 	{
 		struct { uint32_t width; uint32_t height; }   resize;
@@ -182,4 +117,3 @@ struct ControlRingBuffer
 	uint32_t              reserved;
 	ControlEvent          events[CONTROL_RING_CAPACITY];
 };
-
