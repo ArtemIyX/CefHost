@@ -144,6 +144,12 @@ bool OsrHandler::EnsureSharedTexture(uint32_t width, uint32_t height)
 
 	fprintf(stdout, "[OsrHandler] Shared texture created %ux%u handle=%p\n",
 		width, height, m_sharedNTHandle);
+
+
+	m_sharedTexture->GetDesc(&desc);
+	fprintf(stdout, "[OsrHandler] Shared texture format: %u size: %ux%u misc: 0x%X\n",
+		desc.Format, desc.Width, desc.Height, desc.MiscFlags);
+	fflush(stdout);
 	return true;
 }
 
@@ -181,8 +187,9 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 		header->sequence++;
 		SetEvent(m_frameBuffer.GetEvent());
 	}
-	fprintf(stdout, "[OsrHandler] OnAcceleratedPaint called\n");
-	fflush(stdout);
+
+	//fprintf(stdout, "[OsrHandler] CEF texture format: %u\n", cefDesc.Format);
+	//fflush(stdout);
 }
 
 void OsrHandler::StartRenderLoop()
