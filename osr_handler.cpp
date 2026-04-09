@@ -189,6 +189,8 @@ void OsrHandler::PumpInput()
     InputEvent evt;
     while (m_inputBuffer.ReadEvent(evt))
     {
+        if (!m_inputEnabled) continue;
+
         switch (evt.type)
         {
         case InputEventType::MouseMove:
