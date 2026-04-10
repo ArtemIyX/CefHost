@@ -263,15 +263,42 @@ void OsrHandler::StartRenderLoop()
 
 	m_inputThread = std::thread([this]()
 		{
+			SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+
+			LARGE_INTEGER freq, start, now;
+			QueryPerformanceFrequency(&freq);
+			// Spin for 0.5ms before falling back to a blocking wait.
+			const LONGLONG spinTicks = freq.QuadPart / 2000;
+
 			while (m_running)
 			{
-				WaitForSingleObject(m_inputBuffer.GetEvent(), 100);
-				if (m_running) PumpInput();
+				if (m_inputBuffer.HasPendingEvents())
+				{
+					PumpInput();
+					continue;
+				}
+
+				// Spin phase: catch events that arrive within 0.5ms.
+				QueryPerformanceCounter(&start);
+				bool found = false;
+				while (m_running)
+				{
+					if (m_inputBuffer.HasPendingEvents()) { found = true; break; }
+					QueryPerformanceCounter(&now);
+					if (now.QuadPart - start.QuadPart >= spinTicks) break;
+					YieldProcessor();
+				}
+
+				if (found)
+					PumpInput();
+				else
+					WaitForSingleObject(m_inputBuffer.GetEvent(), 100);
 			}
 		});
 
 	m_controlThread = std::thread([this]()
 		{
+			SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
 			while (m_running)
 			{
 				WaitForSingleObject(m_controlBuffer.GetEvent(), 100);

@@ -41,6 +41,13 @@ public:
         return true;
     }
 
+    bool HasPendingEvents() const
+    {
+        if (!m_pRing) return false;
+        return m_pRing->read_index.load(std::memory_order_acquire) !=
+               m_pRing->write_index.load(std::memory_order_acquire);
+    }
+
     HANDLE GetEvent() const { return m_hEvent; }
 
     void Shutdown()
