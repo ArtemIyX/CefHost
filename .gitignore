@@ -16,3 +16,4 @@ compile_commands.json
 .idea/
 .claude/
 CLAUDE.md
+build.bat
