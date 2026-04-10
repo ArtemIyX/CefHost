@@ -10,6 +10,7 @@ void SimpleApp::OnContextInitialized()
     CefWindowInfo window_info;
     window_info.SetAsWindowless(nullptr);
     window_info.shared_texture_enabled = true;
+    window_info.external_begin_frame_enabled = true;
 
     CefBrowserSettings browser_settings;
     browser_settings.windowless_frame_rate = 120;

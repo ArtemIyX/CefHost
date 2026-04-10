@@ -60,6 +60,7 @@ public:
 private:
 	void PumpInput();
 	void PumpControl();
+	void TrySendBeginFrame();
 	void StartRenderLoop();
 	void StopRenderLoop();
 	bool EnsureSharedTextures(uint32_t width, uint32_t height);
@@ -76,6 +77,7 @@ private:
 	std::atomic<bool>     m_running{ false };
 	std::atomic<bool>     m_inputEnabled{ true };
 	std::atomic<bool>     m_paused{ false };
+	std::atomic<uint64_t> m_lastBeginFrameUs{ 0 };
 
 	CefRect              m_popupRect;
 	std::atomic<bool>    m_popupVisible{ false };

@@ -173,6 +173,8 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 
 	if (type == PET_POPUP)
 	{
+		// Lock order: textureMutex → popupTextureMutex (same as PET_VIEW path)
+		std::lock_guard<std::mutex> lock(m_textureMutex);
 		std::lock_guard<std::mutex> popupLock(m_popupTextureMutex);
 
 		if (!m_popupTexture || m_popupTexWidth != cefDesc.Width || m_popupTexHeight != cefDesc.Height)
@@ -198,6 +200,31 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 		}
 
 		context->CopyResource(m_popupTexture.Get(), cefTexture.Get());
+
+		// Re-composite immediately: copy last published view + overlay new popup → publish
+		if (m_popupVisible && m_sharedTexture[0] && m_sharedTexture[1] &&
+			m_popupRect.width > 0 && m_popupRect.height > 0)
+		{
+			const uint32_t backSlot = 1u - m_writeSlot;
+			context->CopyResource(m_sharedTexture[backSlot].Get(), m_sharedTexture[m_writeSlot].Get());
+			D3D11_BOX srcBox = {};
+			srcBox.right  = static_cast<UINT>(m_popupRect.width);
+			srcBox.bottom = static_cast<UINT>(m_popupRect.height);
+			srcBox.back   = 1;
+			context->CopySubresourceRegion(
+				m_sharedTexture[backSlot].Get(), 0,
+				static_cast<UINT>(m_popupRect.x), static_cast<UINT>(m_popupRect.y), 0,
+				m_popupTexture.Get(), 0, &srcBox);
+			context->Flush();
+			m_writeSlot = backSlot;
+			FrameHeader* header = m_frameBuffer.GetHeader();
+			if (header)
+			{
+				header->write_slot = m_writeSlot;
+				header->sequence++;
+				SetEvent(m_frameBuffer.GetEvent());
+			}
+		}
 		return;
 	}
 
@@ -208,20 +235,15 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 	if (!EnsureSharedTextures(cefDesc.Width, cefDesc.Height))
 		return;
 
-	// Copy current write slot (preserves last frame with baked popup) then overwrite with fresh view
 	const uint32_t backSlot = 1u - m_writeSlot;
 	context->CopyResource(m_sharedTexture[backSlot].Get(), cefTexture.Get());
 
-	// Composite popup on top if visible
 	if (m_popupVisible)
 	{
 		std::lock_guard<std::mutex> popupLock(m_popupTextureMutex);
 		if (m_popupTexture && m_popupRect.width > 0 && m_popupRect.height > 0)
 		{
 			D3D11_BOX srcBox = {};
-			srcBox.left   = 0;
-			srcBox.top    = 0;
-			srcBox.front  = 0;
 			srcBox.right  = static_cast<UINT>(m_popupRect.width);
 			srcBox.bottom = static_cast<UINT>(m_popupRect.height);
 			srcBox.back   = 1;
@@ -234,7 +256,6 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 
 	context->Flush();
 
-	// Flip
 	m_writeSlot = backSlot;
 
 	FrameHeader* header = m_frameBuffer.GetHeader();
@@ -246,6 +267,19 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 	}
 }
 
+void OsrHandler::TrySendBeginFrame()
+{
+	using namespace std::chrono;
+	uint64_t now = duration_cast<microseconds>(
+		steady_clock::now().time_since_epoch()).count();
+	uint64_t prev = m_lastBeginFrameUs.load(std::memory_order_relaxed);
+	if (now - prev < 4000) return;
+	if (!m_lastBeginFrameUs.compare_exchange_weak(prev, now, std::memory_order_relaxed))
+		return;
+	CefRefPtr<CefBrowser> b = m_browser;
+	if (b) b->GetHost()->SendExternalBeginFrame();
+}
+
 void OsrHandler::StartRenderLoop()
 {
 	m_running = true;
@@ -254,9 +288,8 @@ void OsrHandler::StartRenderLoop()
 		{
 			while (m_running)
 			{
-				CefRefPtr<CefBrowser> browser = m_browser;
-				if (browser && !m_paused)
-					browser->GetHost()->Invalidate(PET_VIEW);
+				if (!m_paused)
+					TrySendBeginFrame();
 				std::this_thread::sleep_for(std::chrono::milliseconds(16));
 			}
 		});
@@ -448,6 +481,7 @@ void OsrHandler::PumpInput()
 		}
 		}
 	}
+	TrySendBeginFrame();
 }
 
 void OsrHandler::PumpControl()
