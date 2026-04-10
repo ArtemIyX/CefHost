@@ -172,7 +172,7 @@ bool OsrHandler::EnsureSharedTextures(uint32_t width, uint32_t height)
 			return false;
 		}
 
-		// Named handle — UE opens by name, no duplication needed
+		// Named handle ï¿½ UE opens by name, no duplication needed
 		wchar_t name[64];
 		swprintf(name, 64, L"Global\\CEFHost_SharedTex_%u", i);
 
@@ -204,8 +204,6 @@ bool OsrHandler::EnsureSharedTextures(uint32_t width, uint32_t height)
 void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
 	const RectList& dirtyRects, const CefAcceleratedPaintInfo& info)
 {
-	if (type != PET_VIEW) return;
-
 	ID3D11DeviceContext* context = g_D3D11Device.GetContext();
 	if (!m_device1 || !context) return;
 
@@ -220,14 +218,67 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 	D3D11_TEXTURE2D_DESC cefDesc;
 	cefTexture->GetDesc(&cefDesc);
 
+	if (type == PET_POPUP)
+	{
+		std::lock_guard<std::mutex> popupLock(m_popupTextureMutex);
+
+		if (!m_popupTexture || m_popupTexWidth != cefDesc.Width || m_popupTexHeight != cefDesc.Height)
+		{
+			m_popupTexture.Reset();
+			D3D11_TEXTURE2D_DESC desc = {};
+			desc.Width            = cefDesc.Width;
+			desc.Height           = cefDesc.Height;
+			desc.MipLevels        = 1;
+			desc.ArraySize        = 1;
+			desc.Format           = cefDesc.Format;
+			desc.SampleDesc.Count = 1;
+			desc.Usage            = D3D11_USAGE_DEFAULT;
+			desc.BindFlags        = D3D11_BIND_SHADER_RESOURCE;
+			hr = g_D3D11Device.GetDevice()->CreateTexture2D(&desc, nullptr, &m_popupTexture);
+			if (FAILED(hr))
+			{
+				fprintf(stderr, "[OsrHandler] CreateTexture2D popup failed: 0x%08X\n", hr);
+				return;
+			}
+			m_popupTexWidth  = cefDesc.Width;
+			m_popupTexHeight = cefDesc.Height;
+		}
+
+		context->CopyResource(m_popupTexture.Get(), cefTexture.Get());
+		return;
+	}
+
+	if (type != PET_VIEW) return;
+
 	std::lock_guard<std::mutex> lock(m_textureMutex);
 
 	if (!EnsureSharedTextures(cefDesc.Width, cefDesc.Height))
 		return;
 
-	// Write into back buffer
+	// Copy current write slot (preserves last frame with baked popup) then overwrite with fresh view
 	const uint32_t backSlot = 1u - m_writeSlot;
 	context->CopyResource(m_sharedTexture[backSlot].Get(), cefTexture.Get());
+
+	// Composite popup on top if visible
+	if (m_popupVisible)
+	{
+		std::lock_guard<std::mutex> popupLock(m_popupTextureMutex);
+		if (m_popupTexture && m_popupRect.width > 0 && m_popupRect.height > 0)
+		{
+			D3D11_BOX srcBox = {};
+			srcBox.left   = 0;
+			srcBox.top    = 0;
+			srcBox.front  = 0;
+			srcBox.right  = static_cast<UINT>(m_popupRect.width);
+			srcBox.bottom = static_cast<UINT>(m_popupRect.height);
+			srcBox.back   = 1;
+			context->CopySubresourceRegion(
+				m_sharedTexture[backSlot].Get(), 0,
+				static_cast<UINT>(m_popupRect.x), static_cast<UINT>(m_popupRect.y), 0,
+				m_popupTexture.Get(), 0, &srcBox);
+		}
+	}
+
 	context->Flush();
 
 	// Flip
@@ -329,7 +380,7 @@ void OsrHandler::OnBeforeContextMenu(CefRefPtr<CefBrowser> browser, CefRefPtr<Ce
 void OsrHandler::OnPopupShow(CefRefPtr<CefBrowser> browser, bool show)
 {
 	m_popupVisible = show;
-	if (!show) { m_popupBuffer.clear(); m_popupRect = {}; }
+	if (!show) { m_popupRect = {}; }
 }
 
 void OsrHandler::OnPopupSize(CefRefPtr<CefBrowser> browser, const CefRect& rect)

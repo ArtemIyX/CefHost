@@ -78,8 +78,13 @@ private:
 	std::atomic<bool>     m_paused{ false };
 
 	CefRect              m_popupRect;
-	std::vector<uint8_t> m_popupBuffer;
 	std::atomic<bool>    m_popupVisible{ false };
+
+	// Popup GPU texture
+	ComPtr<ID3D11Texture2D> m_popupTexture;
+	std::mutex              m_popupTextureMutex;
+	uint32_t                m_popupTexWidth  = 0;
+	uint32_t                m_popupTexHeight = 0;
 
 	// Double buffer
 	static constexpr uint32_t BUFFER_COUNT = 2;
