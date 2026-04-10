@@ -4,6 +4,8 @@
 #include "include/cef_command_line.h"
 #include "simple_app.h"
 #include "D3d11device.h"
+#include <timeapi.h>
+#pragma comment(lib, "winmm.lib")
 
 D3D11Device g_D3D11Device;
 
@@ -25,6 +27,8 @@ int main(int argc, char* argv[])
 
 
 
+    timeBeginPeriod(1);
+
     CefSettings settings;
     settings.no_sandbox = true;
     settings.windowless_rendering_enabled = true;
@@ -32,6 +36,8 @@ int main(int argc, char* argv[])
     CefInitialize(main_args, settings, app, nullptr);
     CefRunMessageLoop();
     CefShutdown();
+
+    timeEndPeriod(1);
 
     g_D3D11Device.Shutdown();
 
