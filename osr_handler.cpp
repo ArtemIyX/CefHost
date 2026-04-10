@@ -273,7 +273,7 @@ void OsrHandler::TrySendBeginFrame()
 	uint64_t now = duration_cast<microseconds>(
 		steady_clock::now().time_since_epoch()).count();
 	uint64_t prev = m_lastBeginFrameUs.load(std::memory_order_relaxed);
-	if (now - prev < 4000) return;
+	if (now - prev < 1000) return;
 	if (!m_lastBeginFrameUs.compare_exchange_weak(prev, now, std::memory_order_relaxed))
 		return;
 	CefRefPtr<CefBrowser> b = m_browser;
@@ -286,11 +286,16 @@ void OsrHandler::StartRenderLoop()
 
 	m_renderThread = std::thread([this]()
 		{
+			using clock = std::chrono::steady_clock;
+			auto next = clock::now();
+			constexpr auto kFrame = std::chrono::nanoseconds(16666667LL);
+
 			while (m_running)
 			{
+				next += kFrame;
 				if (!m_paused)
 					TrySendBeginFrame();
-				std::this_thread::sleep_for(std::chrono::milliseconds(16));
+				std::this_thread::sleep_until(next);
 			}
 		});
 
