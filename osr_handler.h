@@ -99,5 +99,11 @@ private:
 
 	ComPtr<ID3D11Device1> m_device1;
 
+	// Cache last opened shared texture per paint type to avoid OpenSharedResource1 on every frame
+	HANDLE                  m_cachedHandleView  = nullptr;
+	ComPtr<ID3D11Texture2D> m_cachedTextureView;
+	HANDLE                  m_cachedHandlePopup = nullptr;
+	ComPtr<ID3D11Texture2D> m_cachedTexturePopup;
+
 	IMPLEMENT_REFCOUNTING(OsrHandler);
 };

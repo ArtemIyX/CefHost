@@ -73,6 +73,9 @@ void OsrHandler::Shutdown()
 		}
 	}
 
+	m_cachedTextureView.Reset();  m_cachedHandleView  = nullptr;
+	m_cachedTexturePopup.Reset(); m_cachedHandlePopup = nullptr;
+
 	m_frameBuffer.Shutdown();
 	m_inputBuffer.Shutdown();
 	m_controlBuffer.Shutdown();
@@ -160,12 +163,24 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 	ID3D11DeviceContext* context = g_D3D11Device.GetContext();
 	if (!m_device1 || !context) return;
 
+	auto& cachedHandle  = (type == PET_POPUP) ? m_cachedHandlePopup  : m_cachedHandleView;
+	auto& cachedTexture = (type == PET_POPUP) ? m_cachedTexturePopup : m_cachedTextureView;
+
 	ComPtr<ID3D11Texture2D> cefTexture;
-	HRESULT hr = m_device1->OpenSharedResource1(info.shared_texture_handle, IID_PPV_ARGS(&cefTexture));
-	if (FAILED(hr))
+	if (info.shared_texture_handle != cachedHandle || !cachedTexture)
 	{
-		fprintf(stderr, "[OsrHandler] OpenSharedResource1 failed: 0x%08X\n", hr);
-		return;
+		HRESULT hr = m_device1->OpenSharedResource1(info.shared_texture_handle, IID_PPV_ARGS(&cefTexture));
+		if (FAILED(hr))
+		{
+			fprintf(stderr, "[OsrHandler] OpenSharedResource1 failed: 0x%08X\n", hr);
+			return;
+		}
+		cachedHandle  = info.shared_texture_handle;
+		cachedTexture = cefTexture;
+	}
+	else
+	{
+		cefTexture = cachedTexture;
 	}
 
 	D3D11_TEXTURE2D_DESC cefDesc;
@@ -189,7 +204,7 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 			desc.SampleDesc.Count = 1;
 			desc.Usage            = D3D11_USAGE_DEFAULT;
 			desc.BindFlags        = D3D11_BIND_SHADER_RESOURCE;
-			hr = g_D3D11Device.GetDevice()->CreateTexture2D(&desc, nullptr, &m_popupTexture);
+			HRESULT hr = g_D3D11Device.GetDevice()->CreateTexture2D(&desc, nullptr, &m_popupTexture);
 			if (FAILED(hr))
 			{
 				fprintf(stderr, "[OsrHandler] CreateTexture2D popup failed: 0x%08X\n", hr);
