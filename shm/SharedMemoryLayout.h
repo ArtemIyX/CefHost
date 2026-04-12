@@ -38,6 +38,10 @@ enum class CefLoadState : uint8_t
 	Idle = 0, Loading = 1, Ready = 2, Error = 3,
 };
 
+constexpr uint32_t MAX_DIRTY_RECTS = 16;
+
+struct DirtyRect { int32_t x, y, w, h; };
+
 struct FrameHeader
 {
 	uint32_t      width;
@@ -46,7 +50,9 @@ struct FrameHeader
 	uint32_t      write_slot;
 	CefCursorType cursor_type;
 	CefLoadState  load_state;
-	uint8_t       reserved[2];
+	uint8_t       dirty_count; // 0 = full frame
+	uint8_t       reserved;
+	DirtyRect     dirty_rects[MAX_DIRTY_RECTS];
 };
 // Pixel buffers kept for layout compat but unused in GPU path
 constexpr uint32_t SHM_FRAME_TOTAL = sizeof(FrameHeader) + SHM_FRAME_SIZE * 2;

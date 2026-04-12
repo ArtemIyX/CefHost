@@ -238,6 +238,8 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 			FrameHeader* header = m_frameBuffer.GetHeader();
 			if (header)
 			{
+				header->dirty_count = 1;
+				header->dirty_rects[0] = { m_popupRect.x, m_popupRect.y, m_popupRect.width, m_popupRect.height };
 				header->write_slot = m_writeSlot;
 				header->sequence++;
 				SetEvent(m_frameBuffer.GetEvent());
@@ -253,11 +255,20 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 	if (!EnsureSharedTextures(cefDesc.Width, cefDesc.Height))
 		return;
 
-	// Both slots stay in sync: every update goes to backSlot AND writeSlot.
-	// This means next frame's backSlot already has the correct base — no full CopyResource needed.
 	const uint32_t backSlot = 1u - m_writeSlot;
 
-	// srcX/srcY = source offset in src texture; destX/destY = destination offset in shared textures.
+	DirtyRect collectedRects[MAX_DIRTY_RECTS];
+	uint32_t  nRects   = 0;
+	bool      overflow = false;
+
+	auto addDirty = [&](int x, int y, int w, int h)
+	{
+		if (nRects < MAX_DIRTY_RECTS)
+			collectedRects[nRects++] = { x, y, w, h };
+		else
+			overflow = true;
+	};
+
 	auto copyToBoth = [&](int destX, int destY, int w, int h, ID3D11Resource* src, int srcX, int srcY)
 	{
 		D3D11_BOX box = {
@@ -266,9 +277,9 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 		};
 		context->CopySubresourceRegion(m_sharedTexture[backSlot].Get(),    0, destX, destY, 0, src, 0, &box);
 		context->CopySubresourceRegion(m_sharedTexture[m_writeSlot].Get(), 0, destX, destY, 0, src, 0, &box);
+		addDirty(destX, destY, w, h);
 	};
 
-	// Dirty rects: source region in cefTexture is at the same position as the destination.
 	for (const auto& r : dirtyRects)
 		copyToBoth(r.x, r.y, r.width, r.height, cefTexture.Get(), r.x, r.y);
 
@@ -287,7 +298,6 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 	{
 		std::lock_guard<std::mutex> popupLock(m_popupTextureMutex);
 		if (m_popupTexture && m_popupRect.width > 0 && m_popupRect.height > 0)
-			// Popup texture starts at (0,0); composite it at (popupRect.x, popupRect.y).
 			copyToBoth(m_popupRect.x, m_popupRect.y, m_popupRect.width, m_popupRect.height,
 			           m_popupTexture.Get(), 0, 0);
 	}
@@ -299,6 +309,16 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 	FrameHeader* header = m_frameBuffer.GetHeader();
 	if (header)
 	{
+		if (!overflow)
+		{
+			header->dirty_count = static_cast<uint8_t>(nRects);
+			for (uint32_t i = 0; i < nRects; ++i)
+				header->dirty_rects[i] = collectedRects[i];
+		}
+		else
+		{
+			header->dirty_count = 0;
+		}
 		header->write_slot = m_writeSlot;
 		header->sequence++;
 		SetEvent(m_frameBuffer.GetEvent());
