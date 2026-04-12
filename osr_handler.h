@@ -80,6 +80,7 @@ private:
 	std::atomic<uint64_t> m_lastBeginFrameUs{ 0 };
 
 	CefRect              m_popupRect;
+	CefRect              m_popupClearRect;   // area to refresh from cefTexture after popup hides
 	std::atomic<bool>    m_popupVisible{ false };
 
 	// Popup GPU texture

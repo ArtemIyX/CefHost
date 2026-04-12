@@ -216,18 +216,21 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 
 		context->CopyResource(m_popupTexture.Get(), cefTexture.Get());
 
-		// Re-composite immediately: copy last published view + overlay new popup → publish
+		// Both slots are kept in sync, so just write the popup region to both.
 		if (m_popupVisible && m_sharedTexture[0] && m_sharedTexture[1] &&
 			m_popupRect.width > 0 && m_popupRect.height > 0)
 		{
 			const uint32_t backSlot = 1u - m_writeSlot;
-			context->CopyResource(m_sharedTexture[backSlot].Get(), m_sharedTexture[m_writeSlot].Get());
 			D3D11_BOX srcBox = {};
 			srcBox.right  = static_cast<UINT>(m_popupRect.width);
 			srcBox.bottom = static_cast<UINT>(m_popupRect.height);
 			srcBox.back   = 1;
 			context->CopySubresourceRegion(
 				m_sharedTexture[backSlot].Get(), 0,
+				static_cast<UINT>(m_popupRect.x), static_cast<UINT>(m_popupRect.y), 0,
+				m_popupTexture.Get(), 0, &srcBox);
+			context->CopySubresourceRegion(
+				m_sharedTexture[m_writeSlot].Get(), 0,
 				static_cast<UINT>(m_popupRect.x), static_cast<UINT>(m_popupRect.y), 0,
 				m_popupTexture.Get(), 0, &srcBox);
 			context->Flush();
@@ -250,23 +253,43 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 	if (!EnsureSharedTextures(cefDesc.Width, cefDesc.Height))
 		return;
 
+	// Both slots stay in sync: every update goes to backSlot AND writeSlot.
+	// This means next frame's backSlot already has the correct base — no full CopyResource needed.
 	const uint32_t backSlot = 1u - m_writeSlot;
-	context->CopyResource(m_sharedTexture[backSlot].Get(), cefTexture.Get());
+
+	// srcX/srcY = source offset in src texture; destX/destY = destination offset in shared textures.
+	auto copyToBoth = [&](int destX, int destY, int w, int h, ID3D11Resource* src, int srcX, int srcY)
+	{
+		D3D11_BOX box = {
+			static_cast<UINT>(srcX), static_cast<UINT>(srcY), 0,
+			static_cast<UINT>(srcX + w), static_cast<UINT>(srcY + h), 1
+		};
+		context->CopySubresourceRegion(m_sharedTexture[backSlot].Get(),    0, destX, destY, 0, src, 0, &box);
+		context->CopySubresourceRegion(m_sharedTexture[m_writeSlot].Get(), 0, destX, destY, 0, src, 0, &box);
+	};
+
+	// Dirty rects: source region in cefTexture is at the same position as the destination.
+	for (const auto& r : dirtyRects)
+		copyToBoth(r.x, r.y, r.width, r.height, cefTexture.Get(), r.x, r.y);
+
+	// Refresh popup area from cefTexture (clears ghost after hide; keeps view-under-popup fresh).
+	{
+		const CefRect& pr = m_popupVisible ? m_popupRect : m_popupClearRect;
+		if (pr.width > 0 && pr.height > 0)
+		{
+			copyToBoth(pr.x, pr.y, pr.width, pr.height, cefTexture.Get(), pr.x, pr.y);
+			if (!m_popupVisible)
+				m_popupClearRect = {};
+		}
+	}
 
 	if (m_popupVisible)
 	{
 		std::lock_guard<std::mutex> popupLock(m_popupTextureMutex);
 		if (m_popupTexture && m_popupRect.width > 0 && m_popupRect.height > 0)
-		{
-			D3D11_BOX srcBox = {};
-			srcBox.right  = static_cast<UINT>(m_popupRect.width);
-			srcBox.bottom = static_cast<UINT>(m_popupRect.height);
-			srcBox.back   = 1;
-			context->CopySubresourceRegion(
-				m_sharedTexture[backSlot].Get(), 0,
-				static_cast<UINT>(m_popupRect.x), static_cast<UINT>(m_popupRect.y), 0,
-				m_popupTexture.Get(), 0, &srcBox);
-		}
+			// Popup texture starts at (0,0); composite it at (popupRect.x, popupRect.y).
+			copyToBoth(m_popupRect.x, m_popupRect.y, m_popupRect.width, m_popupRect.height,
+			           m_popupTexture.Get(), 0, 0);
 	}
 
 	context->Flush();
@@ -412,6 +435,8 @@ void OsrHandler::OnBeforeContextMenu(CefRefPtr<CefBrowser> browser, CefRefPtr<Ce
 
 void OsrHandler::OnPopupShow(CefRefPtr<CefBrowser> browser, bool show)
 {
+	if (!show && m_popupRect.width > 0)
+		m_popupClearRect = m_popupRect;
 	m_popupVisible = show;
 	if (!show) { m_popupRect = {}; }
 }
