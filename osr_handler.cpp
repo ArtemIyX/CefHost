@@ -498,16 +498,23 @@ void OsrHandler::PumpInput()
 		case InputEventType::MouseMove:
 		{
 			CefMouseEvent e; e.x = evt.mouse.x; e.y = evt.mouse.y;
+			e.modifiers = m_mouseModifiers;
 			host->SendMouseMoveEvent(e, false);
 			break;
 		}
 		case InputEventType::MouseDown:
 		case InputEventType::MouseUp:
 		{
+			auto btn = static_cast<CefBrowserHost::MouseButtonType>(evt.mouse.button);
+			bool isUp = evt.type == InputEventType::MouseUp;
+			uint32_t flag = (btn == MBT_LEFT)   ? EVENTFLAG_LEFT_MOUSE_BUTTON
+			              : (btn == MBT_MIDDLE)  ? EVENTFLAG_MIDDLE_MOUSE_BUTTON
+			                                     : EVENTFLAG_RIGHT_MOUSE_BUTTON;
+			if (isUp) m_mouseModifiers &= ~flag;
+			else      m_mouseModifiers |= flag;
 			CefMouseEvent e; e.x = evt.mouse.x; e.y = evt.mouse.y;
-			host->SendMouseClickEvent(e,
-				static_cast<CefBrowserHost::MouseButtonType>(evt.mouse.button),
-				evt.type == InputEventType::MouseUp, 1);
+			e.modifiers = m_mouseModifiers;
+			host->SendMouseClickEvent(e, btn, isUp, 1);
 			break;
 		}
 		case InputEventType::MouseScroll:

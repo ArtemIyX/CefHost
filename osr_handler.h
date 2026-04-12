@@ -76,6 +76,7 @@ private:
 	std::thread           m_controlThread;
 	std::atomic<bool>     m_running{ false };
 	std::atomic<bool>     m_inputEnabled{ true };
+	uint32_t              m_mouseModifiers{ 0 };
 	std::atomic<bool>     m_paused{ false };
 	std::atomic<uint64_t> m_lastBeginFrameUs{ 0 };
 
