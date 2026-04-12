@@ -239,26 +239,25 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 			overflow = true;
 	};
 
-	auto copyToBoth = [&](int destX, int destY, int w, int h, ID3D11Resource* src, int srcX, int srcY)
+	auto copyToBack = [&](int destX, int destY, int w, int h, ID3D11Resource* src, int srcX, int srcY)
 	{
 		D3D11_BOX box = {
 			static_cast<UINT>(srcX), static_cast<UINT>(srcY), 0,
 			static_cast<UINT>(srcX + w), static_cast<UINT>(srcY + h), 1
 		};
-		context->CopySubresourceRegion(m_sharedTexture[backSlot].Get(),    0, destX, destY, 0, src, 0, &box);
-		context->CopySubresourceRegion(m_sharedTexture[m_writeSlot].Get(), 0, destX, destY, 0, src, 0, &box);
+		context->CopySubresourceRegion(m_sharedTexture[backSlot].Get(), 0, destX, destY, 0, src, 0, &box);
 		addDirty(destX, destY, w, h);
 	};
 
 	for (const auto& r : dirtyRects)
-		copyToBoth(r.x, r.y, r.width, r.height, cefTexture.Get(), r.x, r.y);
+		copyToBack(r.x, r.y, r.width, r.height, cefTexture.Get(), r.x, r.y);
 
 	// Refresh popup area from cefTexture (clears ghost after hide; keeps view-under-popup fresh).
 	{
 		const CefRect& pr = m_popupVisible ? m_popupRect : m_popupClearRect;
 		if (pr.width > 0 && pr.height > 0)
 		{
-			copyToBoth(pr.x, pr.y, pr.width, pr.height, cefTexture.Get(), pr.x, pr.y);
+			copyToBack(pr.x, pr.y, pr.width, pr.height, cefTexture.Get(), pr.x, pr.y);
 			if (!m_popupVisible)
 				m_popupClearRect = {};
 		}
@@ -268,13 +267,36 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 	{
 		std::lock_guard<std::mutex> popupLock(m_popupTextureMutex);
 		if (m_popupTexture && m_popupRect.width > 0 && m_popupRect.height > 0)
-			copyToBoth(m_popupRect.x, m_popupRect.y, m_popupRect.width, m_popupRect.height,
+			copyToBack(m_popupRect.x, m_popupRect.y, m_popupRect.width, m_popupRect.height,
 			           m_popupTexture.Get(), 0, 0);
 	}
 
 	context->Flush();
 
 	m_writeSlot = backSlot;
+
+	// Sync dirty regions to old front (now new back) so both buffers stay identical
+	// for the next frame's partial updates. Deferred -- next Flush() submits these.
+	if (!overflow)
+	{
+		for (uint32_t i = 0; i < nRects; ++i)
+		{
+			const auto& d = collectedRects[i];
+			D3D11_BOX box = {
+				static_cast<UINT>(d.x), static_cast<UINT>(d.y), 0,
+				static_cast<UINT>(d.x + d.w), static_cast<UINT>(d.y + d.h), 1
+			};
+			context->CopySubresourceRegion(
+				m_sharedTexture[1u - m_writeSlot].Get(), 0, d.x, d.y, 0,
+				m_sharedTexture[m_writeSlot].Get(), 0, &box);
+		}
+	}
+	else
+	{
+		context->CopyResource(
+			m_sharedTexture[1u - m_writeSlot].Get(),
+			m_sharedTexture[m_writeSlot].Get());
+	}
 
 	FrameHeader* header = m_frameBuffer.GetHeader();
 	if (header)
