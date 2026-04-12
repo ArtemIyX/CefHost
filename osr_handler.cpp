@@ -188,8 +188,8 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 
 	if (type == PET_POPUP)
 	{
-		// Lock order: textureMutex → popupTextureMutex (same as PET_VIEW path)
-		std::lock_guard<std::mutex> lock(m_textureMutex);
+		// Only cache popup content. PET_VIEW composites it into shared textures,
+		// eliminating the duplicate Flush/writeSlot-flip/SetEvent per frame.
 		std::lock_guard<std::mutex> popupLock(m_popupTextureMutex);
 
 		if (!m_popupTexture || m_popupTexWidth != cefDesc.Width || m_popupTexHeight != cefDesc.Height)
@@ -215,36 +215,6 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 		}
 
 		context->CopyResource(m_popupTexture.Get(), cefTexture.Get());
-
-		// Both slots are kept in sync, so just write the popup region to both.
-		if (m_popupVisible && m_sharedTexture[0] && m_sharedTexture[1] &&
-			m_popupRect.width > 0 && m_popupRect.height > 0)
-		{
-			const uint32_t backSlot = 1u - m_writeSlot;
-			D3D11_BOX srcBox = {};
-			srcBox.right  = static_cast<UINT>(m_popupRect.width);
-			srcBox.bottom = static_cast<UINT>(m_popupRect.height);
-			srcBox.back   = 1;
-			context->CopySubresourceRegion(
-				m_sharedTexture[backSlot].Get(), 0,
-				static_cast<UINT>(m_popupRect.x), static_cast<UINT>(m_popupRect.y), 0,
-				m_popupTexture.Get(), 0, &srcBox);
-			context->CopySubresourceRegion(
-				m_sharedTexture[m_writeSlot].Get(), 0,
-				static_cast<UINT>(m_popupRect.x), static_cast<UINT>(m_popupRect.y), 0,
-				m_popupTexture.Get(), 0, &srcBox);
-			context->Flush();
-			m_writeSlot = backSlot;
-			FrameHeader* header = m_frameBuffer.GetHeader();
-			if (header)
-			{
-				header->dirty_count = 1;
-				header->dirty_rects[0] = { m_popupRect.x, m_popupRect.y, m_popupRect.width, m_popupRect.height };
-				header->write_slot = m_writeSlot;
-				header->sequence++;
-				SetEvent(m_frameBuffer.GetEvent());
-			}
-		}
 		return;
 	}
 
