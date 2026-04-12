@@ -227,6 +227,12 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 
 	const uint32_t backSlot = 1u - m_writeSlot;
 
+	// Full copy CEF texture to back buffer. The old approach (dirty-rect copy +
+	// post-flip sync-back) raced with UE5: the sync-back wrote to the old front
+	// buffer while the consumer was still reading it, causing ghosting artifacts.
+	// Full copy costs ~16us at 1080p and eliminates the race entirely.
+	context->CopyResource(m_sharedTexture[backSlot].Get(), cefTexture.Get());
+
 	DirtyRect collectedRects[MAX_DIRTY_RECTS];
 	uint32_t  nRects   = 0;
 	bool      overflow = false;
@@ -239,64 +245,37 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 			overflow = true;
 	};
 
-	auto copyToBack = [&](int destX, int destY, int w, int h, ID3D11Resource* src, int srcX, int srcY)
-	{
-		D3D11_BOX box = {
-			static_cast<UINT>(srcX), static_cast<UINT>(srcY), 0,
-			static_cast<UINT>(srcX + w), static_cast<UINT>(srcY + h), 1
-		};
-		context->CopySubresourceRegion(m_sharedTexture[backSlot].Get(), 0, destX, destY, 0, src, 0, &box);
-		addDirty(destX, destY, w, h);
-	};
-
 	for (const auto& r : dirtyRects)
-		copyToBack(r.x, r.y, r.width, r.height, cefTexture.Get(), r.x, r.y);
+		addDirty(r.x, r.y, r.width, r.height);
 
-	// Refresh popup area from cefTexture (clears ghost after hide; keeps view-under-popup fresh).
+	// Track popup area as dirty for consumer
 	{
 		const CefRect& pr = m_popupVisible ? m_popupRect : m_popupClearRect;
 		if (pr.width > 0 && pr.height > 0)
 		{
-			copyToBack(pr.x, pr.y, pr.width, pr.height, cefTexture.Get(), pr.x, pr.y);
+			addDirty(pr.x, pr.y, pr.width, pr.height);
 			if (!m_popupVisible)
 				m_popupClearRect = {};
 		}
 	}
 
+	// Composite popup on back buffer
 	if (m_popupVisible)
 	{
 		std::lock_guard<std::mutex> popupLock(m_popupTextureMutex);
 		if (m_popupTexture && m_popupRect.width > 0 && m_popupRect.height > 0)
-			copyToBack(m_popupRect.x, m_popupRect.y, m_popupRect.width, m_popupRect.height,
-			           m_popupTexture.Get(), 0, 0);
+		{
+			D3D11_BOX box = {
+				0, 0, 0,
+				static_cast<UINT>(m_popupRect.width), static_cast<UINT>(m_popupRect.height), 1
+			};
+			context->CopySubresourceRegion(m_sharedTexture[backSlot].Get(), 0,
+				m_popupRect.x, m_popupRect.y, 0, m_popupTexture.Get(), 0, &box);
+		}
 	}
 
 	context->Flush();
-
 	m_writeSlot = backSlot;
-
-	// Sync dirty regions to old front (now new back) so both buffers stay identical
-	// for the next frame's partial updates. Deferred -- next Flush() submits these.
-	if (!overflow)
-	{
-		for (uint32_t i = 0; i < nRects; ++i)
-		{
-			const auto& d = collectedRects[i];
-			D3D11_BOX box = {
-				static_cast<UINT>(d.x), static_cast<UINT>(d.y), 0,
-				static_cast<UINT>(d.x + d.w), static_cast<UINT>(d.y + d.h), 1
-			};
-			context->CopySubresourceRegion(
-				m_sharedTexture[1u - m_writeSlot].Get(), 0, d.x, d.y, 0,
-				m_sharedTexture[m_writeSlot].Get(), 0, &box);
-		}
-	}
-	else
-	{
-		context->CopyResource(
-			m_sharedTexture[1u - m_writeSlot].Get(),
-			m_sharedTexture[m_writeSlot].Get());
-	}
 
 	FrameHeader* header = m_frameBuffer.GetHeader();
 	if (header)
