@@ -210,3 +210,24 @@ YYYY-MM-DD HH:MM
 ### Impact
 - Host now supports adaptive pacing inputs and better fixed-rate consistency.
 - `cmake --build build --config Release` passes after change.
+
+---
+
+## 2026-04-13 15:22
+
+### Changed
+- Added lightweight CEF-side telemetry counters in `OsrHandler`:
+  - produced frames
+  - forced-full frame count
+  - dirty rect count sum
+  - dirty rect area sum
+  - copy submit time sum/max (microseconds)
+- Added periodic telemetry logging (every ~2s) in paint publish path:
+  - `[OsrTelemetry] frames=... forced_full=... dirty_rects_avg=... dirty_area_avg=... copy_us_avg=... copy_us_max=...`
+
+### Why
+- Make tuning objective by exposing actual runtime behavior and copy cost.
+
+### Impact
+- No functional behavior change; only additional counters/log output.
+- `cmake --build build --config Release` passes after telemetry update.

@@ -87,6 +87,13 @@ private:
 	std::atomic<uint32_t> m_smoothedConsumerCadenceUs{ 0 };
 	std::atomic<bool>     m_forceFullFrame{ true };
 	bool                  m_enableThreadTuning{ true };
+	std::atomic<uint64_t> m_lastTelemetryLogUs{ 0 };
+	std::atomic<uint64_t> m_statProducedFrames{ 0 };
+	std::atomic<uint64_t> m_statForcedFullFrames{ 0 };
+	std::atomic<uint64_t> m_statDirtyRectCountSum{ 0 };
+	std::atomic<uint64_t> m_statDirtyRectAreaSum{ 0 };
+	std::atomic<uint64_t> m_statCopySubmitUsSum{ 0 };
+	std::atomic<uint64_t> m_statCopySubmitUsMax{ 0 };
 	uint64_t              m_nextFrameId{ 1 };
 	uint32_t              m_keyframeInterval{ 120 };
 	uint32_t              m_warmupFullFrames{ 3 };

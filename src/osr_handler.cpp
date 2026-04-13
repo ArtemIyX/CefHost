@@ -229,6 +229,10 @@ bool OsrHandler::EnsureSharedTextures(uint32_t width, uint32_t height, bool* out
 void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
 	const RectList& dirtyRects, const CefAcceleratedPaintInfo& info)
 {
+	using namespace std::chrono;
+	const uint64_t copyStartUs = duration_cast<microseconds>(
+		steady_clock::now().time_since_epoch()).count();
+
 	ID3D11DeviceContext* context = g_D3D11Device.GetContext();
 	if (!m_device1 || !context) return;
 
@@ -368,13 +372,20 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 		{
 			frameFlags |= FRAME_FLAG_FULL_FRAME;
 			header->dirty_count = 0;
+			m_statForcedFullFrames.fetch_add(1, std::memory_order_relaxed);
 		}
 		else
 		{
 			frameFlags |= FRAME_FLAG_DIRTY_ONLY;
 			header->dirty_count = static_cast<uint8_t>(nRects);
 			for (uint32_t i = 0; i < nRects; ++i)
+			{
 				header->dirty_rects[i] = collectedRects[i];
+				const uint64_t area = static_cast<uint64_t>(collectedRects[i].w > 0 ? collectedRects[i].w : 0) *
+					static_cast<uint64_t>(collectedRects[i].h > 0 ? collectedRects[i].h : 0);
+				m_statDirtyRectAreaSum.fetch_add(area, std::memory_order_relaxed);
+			}
+			m_statDirtyRectCountSum.fetch_add(nRects, std::memory_order_relaxed);
 		}
 
 		context->Flush();
@@ -392,6 +403,44 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 		std::atomic_thread_fence(std::memory_order_release);
 		header->sequence++;
 		SetEvent(m_frameBuffer.GetEvent());
+
+		m_statProducedFrames.fetch_add(1, std::memory_order_relaxed);
+		const uint64_t copyEndUs = duration_cast<microseconds>(
+			steady_clock::now().time_since_epoch()).count();
+		const uint64_t copySubmitUs = (copyEndUs > copyStartUs) ? (copyEndUs - copyStartUs) : 0;
+		m_statCopySubmitUsSum.fetch_add(copySubmitUs, std::memory_order_relaxed);
+		uint64_t prevMax = m_statCopySubmitUsMax.load(std::memory_order_relaxed);
+		while (copySubmitUs > prevMax &&
+			!m_statCopySubmitUsMax.compare_exchange_weak(prevMax, copySubmitUs, std::memory_order_relaxed))
+		{
+		}
+
+		uint64_t lastLogUs = m_lastTelemetryLogUs.load(std::memory_order_relaxed);
+		if (lastLogUs == 0)
+		{
+			m_lastTelemetryLogUs.store(copyEndUs, std::memory_order_relaxed);
+		}
+		else if (copyEndUs - lastLogUs >= 2000000ULL &&
+			m_lastTelemetryLogUs.compare_exchange_weak(lastLogUs, copyEndUs, std::memory_order_relaxed))
+		{
+			const uint64_t produced = m_statProducedFrames.exchange(0, std::memory_order_relaxed);
+			const uint64_t forced = m_statForcedFullFrames.exchange(0, std::memory_order_relaxed);
+			const uint64_t dirtyCount = m_statDirtyRectCountSum.exchange(0, std::memory_order_relaxed);
+			const uint64_t dirtyArea = m_statDirtyRectAreaSum.exchange(0, std::memory_order_relaxed);
+			const uint64_t copyUsSum = m_statCopySubmitUsSum.exchange(0, std::memory_order_relaxed);
+			const uint64_t copyUsMax = m_statCopySubmitUsMax.exchange(0, std::memory_order_relaxed);
+			const uint64_t avgCopyUs = (produced > 0) ? (copyUsSum / produced) : 0;
+			const uint64_t avgDirtyRects = (produced > 0) ? (dirtyCount / produced) : 0;
+			const uint64_t avgDirtyArea = (produced > 0) ? (dirtyArea / produced) : 0;
+			fprintf(stdout,
+				"[OsrTelemetry] frames=%llu forced_full=%llu dirty_rects_avg=%llu dirty_area_avg=%llu copy_us_avg=%llu copy_us_max=%llu\n",
+				static_cast<unsigned long long>(produced),
+				static_cast<unsigned long long>(forced),
+				static_cast<unsigned long long>(avgDirtyRects),
+				static_cast<unsigned long long>(avgDirtyArea),
+				static_cast<unsigned long long>(avgCopyUs),
+				static_cast<unsigned long long>(copyUsMax));
+		}
 	}
 }
 
