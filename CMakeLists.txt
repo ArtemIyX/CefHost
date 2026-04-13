@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.20)
 project(Host)
 
 set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(CEF_ROOT "${CMAKE_SOURCE_DIR}/cef")
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CEF_ROOT}/cmake")
@@ -10,9 +12,27 @@ find_package(CEF REQUIRED)
 
 add_subdirectory(${CEF_ROOT}/libcef_dll libcef_dll)
 
-add_executable(Host main.cpp simple_app.cpp osr_handler.cpp "shm/ControlBuffer.h" "D3D11Device.h")
+set(HOST_SOURCES
+    src/main.cpp
+    src/cef_browser_app.cpp
+    src/osr_handler.cpp
+    src/host_runtime_config.cpp
+)
 
-target_include_directories(Host PRIVATE ${CEF_ROOT})
+set(HOST_HEADERS
+    include/cef_browser_app.h
+    include/osr_handler.h
+    include/D3d11device.h
+    include/host_runtime_config.h
+    include/shm/SharedMemoryLayout.h
+    include/shm/SharedFrameBuffer.h
+    include/shm/SharedInputBuffer.h
+    include/shm/SharedControlBuffer.h
+)
+
+add_executable(Host ${HOST_SOURCES} ${HOST_HEADERS})
+
+target_include_directories(Host PRIVATE ${CEF_ROOT} ${CMAKE_SOURCE_DIR}/include)
 
 target_link_libraries(Host
     libcef_dll_wrapper

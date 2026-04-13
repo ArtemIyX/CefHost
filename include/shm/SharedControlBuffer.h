@@ -2,7 +2,8 @@
 #include "SharedMemoryLayout.h"
 #include <Windows.h>
 
-class ControlBuffer
+// Shared ring buffer for control commands sent to host browser.
+class SharedControlBuffer
 {
 public:
 	bool Init()
@@ -47,7 +48,7 @@ public:
 		if (m_hEvent) { CloseHandle(m_hEvent);    m_hEvent = nullptr; }
 	}
 
-	~ControlBuffer() { Shutdown(); }
+	~SharedControlBuffer() { Shutdown(); }
 
 private:
 	HANDLE             m_hMap = nullptr;

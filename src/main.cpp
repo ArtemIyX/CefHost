@@ -2,8 +2,9 @@
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "include/cef_command_line.h"
-#include "simple_app.h"
+#include "cef_browser_app.h"
 #include "D3d11device.h"
+#include "host_runtime_config.h"
 #include <timeapi.h>
 #pragma comment(lib, "winmm.lib")
 
@@ -11,9 +12,17 @@ D3D11Device g_D3D11Device;
 
 int main(int argc, char* argv[])
 {
+    // Parse runtime knobs before CEF starts.
+    HostRuntimeConfig config = HostRuntimeConfig::FromArgs(argc, argv);
+    if (config.ShowHelp)
+    {
+        HostRuntimeConfig::PrintUsage();
+        return 0;
+    }
+
     CefMainArgs main_args(::GetModuleHandle(nullptr));
 
-    CefRefPtr<SimpleApp> app(new SimpleApp());
+    CefRefPtr<CefHostBrowserApp> app(new CefHostBrowserApp(config));
 
     int exit_code = CefExecuteProcess(main_args, app, nullptr);
     if (exit_code >= 0)

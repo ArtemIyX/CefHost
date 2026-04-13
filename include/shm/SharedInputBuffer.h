@@ -3,7 +3,8 @@
 #include <Windows.h>
 #include <cstring>
 
-class InputBuffer
+// Shared ring buffer for input events sent from consumer to host.
+class SharedInputBuffer
 {
 public:
     bool Init()
@@ -57,7 +58,7 @@ public:
         if (m_hEvent) { CloseHandle(m_hEvent);      m_hEvent = nullptr; }
     }
 
-    ~InputBuffer() { Shutdown(); }
+    ~SharedInputBuffer() { Shutdown(); }
 
 private:
     HANDLE           m_hMap = nullptr;

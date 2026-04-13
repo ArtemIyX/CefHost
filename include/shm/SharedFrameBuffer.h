@@ -4,7 +4,8 @@
 #include <cstring>
 #include <atomic>
 
-class FrameBuffer
+// Shared frame metadata + event handle used by producer/consumer processes.
+class SharedFrameBuffer
 {
 public:
     bool Init()
@@ -60,7 +61,7 @@ public:
         if (m_hEvent) { CloseHandle(m_hEvent);      m_hEvent = nullptr; }
     }
 
-    ~FrameBuffer() { Shutdown(); }
+    ~SharedFrameBuffer() { Shutdown(); }
 
     FrameHeader* GetHeader() const
     {

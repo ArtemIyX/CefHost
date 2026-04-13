@@ -2,9 +2,9 @@
 #include "include/cef_client.h"
 #include "include/cef_render_handler.h"
 #include "include/cef_display_handler.h"
-#include "shm/FrameBuffer.h"
-#include "shm/InputBuffer.h"
-#include "shm/ControlBuffer.h"
+#include "shm/SharedFrameBuffer.h"
+#include "shm/SharedInputBuffer.h"
+#include "shm/SharedControlBuffer.h"
 #include "D3D11Device.h"
 #include <d3d11_1.h>
 #include <dxgi1_2.h>
@@ -68,9 +68,9 @@ private:
 
 	uint32_t              m_width;
 	uint32_t              m_height;
-	FrameBuffer           m_frameBuffer;
-	InputBuffer           m_inputBuffer;
-	ControlBuffer         m_controlBuffer;
+	SharedFrameBuffer     m_frameBuffer;
+	SharedInputBuffer     m_inputBuffer;
+	SharedControlBuffer   m_controlBuffer;
 	CefRefPtr<CefBrowser> m_browser;
 	std::thread           m_renderThread;
 	std::thread           m_inputThread;
