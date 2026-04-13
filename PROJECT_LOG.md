@@ -5,6 +5,7 @@ Use this file to capture project changes so future LLM sessions can quickly unde
 - why it changed,
 - when it changed,
 - and what should happen next.
+- do not add that - `cmake --build build --config Release` passes after the change.
 
 ---
 
@@ -87,7 +88,6 @@ YYYY-MM-DD HH:MM
 ### Impact
 - Default behavior unchanged (`1920x1080`, `120 FPS`, shared texture + external begin frame enabled, `https://testufo.com/`).
 - Host can now be tuned from command line for quick testing and integration.
-- `cmake --build build --config Release` passes after refactor.
 
 ---
 
@@ -106,7 +106,6 @@ YYYY-MM-DD HH:MM
 
 ### Impact
 - Shared texture mode and external begin frame are now always enabled.
-- `cmake --build build --config Release` passes after the change.
 
 ---
 
@@ -124,7 +123,6 @@ YYYY-MM-DD HH:MM
 
 ### Impact
 - Build system uses the new tree cleanly.
-- `cmake --build build --config Release` passes after restructure.
 
 ---
 
@@ -148,7 +146,6 @@ YYYY-MM-DD HH:MM
 
 ### Impact
 - No behavior change.
-- `cmake --build build --config Release` passes after renames.
 
 ---
 
@@ -167,8 +164,6 @@ YYYY-MM-DD HH:MM
 
 ### Impact
 - Clear fail-fast behavior if host/UE protocol versions diverge.
-- `cmake --build build --config Release` passes after host-side handshake update.
-
 ---
 
 ## 2026-04-13 14:50
@@ -188,7 +183,6 @@ YYYY-MM-DD HH:MM
 
 ### Impact
 - Thread tuning is on by default, optional to disable.
-- `cmake --build build --config Release` passes after change.
 
 ---
 
@@ -209,7 +203,6 @@ YYYY-MM-DD HH:MM
 
 ### Impact
 - Host now supports adaptive pacing inputs and better fixed-rate consistency.
-- `cmake --build build --config Release` passes after change.
 
 ---
 
@@ -230,7 +223,6 @@ YYYY-MM-DD HH:MM
 
 ### Impact
 - No functional behavior change; only additional counters/log output.
-- `cmake --build build --config Release` passes after telemetry update.
 
 ---
 
@@ -248,7 +240,6 @@ YYYY-MM-DD HH:MM
 
 ### Impact
 - Begin-frame production now follows adaptive cadence consistently.
-- `cmake --build build --config Release` passes after patch.
 
 ---
 
@@ -269,8 +260,6 @@ YYYY-MM-DD HH:MM
 
 ### Impact
 - Default behavior is latency-first, with optional adaptive pacing opt-in.
-- `cmake --build build --config Release` passes after patch.
-
 ---
 
 ## 2026-04-13 16:34
@@ -286,7 +275,6 @@ YYYY-MM-DD HH:MM
 
 ### Impact
 - Adds conservative self-heal path for static ghost artifacts with low overhead.
-- `cmake --build build --config Release` passes after patch.
 
 ---
 
@@ -307,4 +295,3 @@ YYYY-MM-DD HH:MM
 
 ### Impact
 - Better pacing under load and stronger producer->consumer correctness semantics.
-- `cmake --build build --config Release` passes after patch.

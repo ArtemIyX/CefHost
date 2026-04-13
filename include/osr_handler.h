@@ -92,6 +92,7 @@ private:
 	bool                  m_enableThreadTuning{ true };
 	bool                  m_enableCadenceFeedback{ false };
 	std::atomic<uint64_t> m_lastTelemetryLogUs{ 0 };
+	std::atomic<uint64_t> m_lastPaintUs{ 0 };
 	std::atomic<uint64_t> m_statProducedFrames{ 0 };
 	std::atomic<uint64_t> m_statForcedFullFrames{ 0 };
 	std::atomic<uint64_t> m_statDirtyRectCountSum{ 0 };
@@ -102,10 +103,15 @@ private:
 	std::atomic<uint64_t> m_lastDirtyPublishUs{ 0 };
 	std::atomic<uint64_t> m_lastRepairInvalidateUs{ 0 };
 	std::atomic<bool>     m_waitingIdleRepair{ false };
+	std::atomic<uint64_t> m_beginFramesSent{ 0 };
+	std::atomic<uint64_t> m_paintsCompleted{ 0 };
 	uint64_t              m_framesSinceFlush{ 0 };
 	uint64_t              m_nextFrameId{ 1 };
 	uint64_t              m_nextGpuFenceValue{ 1 };
 	uint32_t              m_keyframeInterval{ 120 };
+	uint64_t              m_keyframeIntervalUs{ 300000ULL };
+	uint64_t              m_lastKeyframeUs{ 0 };
+	uint32_t              m_maxInFlightBeginFrames{ 0 };
 	uint32_t              m_warmupFullFrames{ 3 };
 	uint32_t              m_flushIntervalFrames{ 4 };
 

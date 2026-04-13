@@ -275,6 +275,7 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 	using namespace std::chrono;
 	const uint64_t copyStartUs = duration_cast<microseconds>(
 		steady_clock::now().time_since_epoch()).count();
+	m_lastPaintUs.store(copyStartUs, std::memory_order_relaxed);
 
 	ID3D11DeviceContext* context = g_D3D11Device.GetContext();
 	if (!m_device1 || !context) return;
@@ -405,6 +406,12 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 		}
 		if (m_keyframeInterval > 0 && (m_nextFrameId % m_keyframeInterval) == 0)
 			forceFull = true;
+		if (m_keyframeIntervalUs > 0)
+		{
+			const uint64_t lastKeyUs = m_lastKeyframeUs;
+			if (lastKeyUs == 0 || (copyStartUs - lastKeyUs) >= m_keyframeIntervalUs)
+				forceFull = true;
+		}
 		if (overflow)
 		{
 			forceFull = true;
@@ -417,6 +424,7 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 			header->dirty_count = 0;
 			m_statForcedFullFrames.fetch_add(1, std::memory_order_relaxed);
 			m_waitingIdleRepair.store(false, std::memory_order_relaxed);
+			m_lastKeyframeUs = copyStartUs;
 		}
 		else
 		{
@@ -470,6 +478,7 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 		SetEvent(m_frameBuffer.GetEvent());
 
 		m_statProducedFrames.fetch_add(1, std::memory_order_relaxed);
+		m_paintsCompleted.fetch_add(1, std::memory_order_relaxed);
 		const uint64_t copyEndUs = duration_cast<microseconds>(
 			steady_clock::now().time_since_epoch()).count();
 		const uint64_t copySubmitUs = (copyEndUs > copyStartUs) ? (copyEndUs - copyStartUs) : 0;
@@ -516,6 +525,14 @@ void OsrHandler::TrySendBeginFrame()
 	uint64_t now = duration_cast<microseconds>(
 		steady_clock::now().time_since_epoch()).count();
 
+	// Backpressure: optional cap for in-flight begin-frames.
+	const uint64_t sent = m_beginFramesSent.load(std::memory_order_relaxed);
+	const uint64_t done = m_paintsCompleted.load(std::memory_order_relaxed);
+	const uint64_t inFlight = (sent > done) ? (sent - done) : 0;
+	if (m_maxInFlightBeginFrames > 0 &&
+		inFlight >= static_cast<uint64_t>(m_maxInFlightBeginFrames))
+		return;
+
 	const uint64_t intervalNs = m_beginFrameIntervalNs.load(std::memory_order_relaxed);
 	const uint64_t intervalUs = (intervalNs / 1000ULL > 0ULL) ? (intervalNs / 1000ULL) : 1ULL;
 
@@ -529,7 +546,11 @@ void OsrHandler::TrySendBeginFrame()
 	}
 
 	CefRefPtr<CefBrowser> b = m_browser;
-	if (b) b->GetHost()->SendExternalBeginFrame();
+	if (b)
+	{
+		b->GetHost()->SendExternalBeginFrame();
+		m_beginFramesSent.fetch_add(1, std::memory_order_relaxed);
+	}
 }
 
 void OsrHandler::TryIdleRepairInvalidate()
