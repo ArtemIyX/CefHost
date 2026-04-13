@@ -270,3 +270,20 @@ YYYY-MM-DD HH:MM
 ### Impact
 - Default behavior is latency-first, with optional adaptive pacing opt-in.
 - `cmake --build build --config Release` passes after patch.
+
+---
+
+## 2026-04-13 16:34
+
+### Changed
+- Added host-side idle ghost-repair watchdog in `OsrHandler`:
+  - tracks last published frame timestamp and whether last publish was dirty-only.
+  - if stream is idle after dirty publish (`~150ms`), requests `Invalidate(PET_VIEW)` once per cooldown.
+- Hooked watchdog into render loop next to begin-frame scheduling.
+
+### Why
+- Recover from under-invalidation cases where final cleanup paint is missed and stale regions persist while scene is static.
+
+### Impact
+- Adds conservative self-heal path for static ghost artifacts with low overhead.
+- `cmake --build build --config Release` passes after patch.

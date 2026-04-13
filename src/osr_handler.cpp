@@ -373,6 +373,7 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 			frameFlags |= FRAME_FLAG_FULL_FRAME;
 			header->dirty_count = 0;
 			m_statForcedFullFrames.fetch_add(1, std::memory_order_relaxed);
+			m_waitingIdleRepair.store(false, std::memory_order_relaxed);
 		}
 		else
 		{
@@ -386,6 +387,8 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 				m_statDirtyRectAreaSum.fetch_add(area, std::memory_order_relaxed);
 			}
 			m_statDirtyRectCountSum.fetch_add(nRects, std::memory_order_relaxed);
+			m_waitingIdleRepair.store(true, std::memory_order_relaxed);
+			m_lastDirtyPublishUs.store(copyStartUs, std::memory_order_relaxed);
 		}
 
 		context->Flush();
@@ -408,6 +411,7 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 		const uint64_t copyEndUs = duration_cast<microseconds>(
 			steady_clock::now().time_since_epoch()).count();
 		const uint64_t copySubmitUs = (copyEndUs > copyStartUs) ? (copyEndUs - copyStartUs) : 0;
+		m_lastPublishUs.store(copyEndUs, std::memory_order_relaxed);
 		m_statCopySubmitUsSum.fetch_add(copySubmitUs, std::memory_order_relaxed);
 		uint64_t prevMax = m_statCopySubmitUsMax.load(std::memory_order_relaxed);
 		while (copySubmitUs > prevMax &&
@@ -466,6 +470,35 @@ void OsrHandler::TrySendBeginFrame()
 	if (b) b->GetHost()->SendExternalBeginFrame();
 }
 
+void OsrHandler::TryIdleRepairInvalidate()
+{
+	using namespace std::chrono;
+	const uint64_t nowUs = duration_cast<microseconds>(
+		steady_clock::now().time_since_epoch()).count();
+
+	if (!m_waitingIdleRepair.load(std::memory_order_relaxed))
+		return;
+
+	const uint64_t lastPublishUs = m_lastPublishUs.load(std::memory_order_relaxed);
+	if (lastPublishUs == 0 || (nowUs - lastPublishUs) < 150000ULL)
+		return;
+
+	const uint64_t lastRepairUs = m_lastRepairInvalidateUs.load(std::memory_order_relaxed);
+	if (lastRepairUs != 0 && (nowUs - lastRepairUs) < 150000ULL)
+		return;
+
+	uint64_t expected = lastRepairUs;
+	if (!m_lastRepairInvalidateUs.compare_exchange_strong(expected, nowUs, std::memory_order_relaxed))
+		return;
+
+	CefRefPtr<CefBrowser> b = m_browser;
+	if (b)
+	{
+		b->GetHost()->Invalidate(PET_VIEW);
+		fprintf(stdout, "[OsrHandler] Idle-repair invalidate requested\n");
+	}
+}
+
 void OsrHandler::UpdateBeginFrameIntervalFromFps(uint32_t fps)
 {
 	const uint32_t clamped = (fps < 1u) ? 1u : (fps > 240u ? 240u : fps);
@@ -514,7 +547,10 @@ void OsrHandler::StartRenderLoop()
 				const auto kFrame = std::chrono::nanoseconds(static_cast<long long>(intervalNs));
 				next += kFrame;
 				if (!m_paused)
+				{
 					TrySendBeginFrame();
+					TryIdleRepairInvalidate();
+				}
 				std::this_thread::sleep_until(next);
 
 				// If scheduler drifts badly (pause/stall), resync to avoid burst catch-up.

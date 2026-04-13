@@ -64,6 +64,7 @@ private:
 	void PumpInput();
 	void PumpControl();
 	void TrySendBeginFrame();
+	void TryIdleRepairInvalidate();
 	void UpdateBeginFrameIntervalFromFps(uint32_t fps);
 	void UpdateBeginFrameIntervalFromConsumerCadenceUs(uint32_t cadenceUs);
 	void StartRenderLoop();
@@ -96,6 +97,10 @@ private:
 	std::atomic<uint64_t> m_statDirtyRectAreaSum{ 0 };
 	std::atomic<uint64_t> m_statCopySubmitUsSum{ 0 };
 	std::atomic<uint64_t> m_statCopySubmitUsMax{ 0 };
+	std::atomic<uint64_t> m_lastPublishUs{ 0 };
+	std::atomic<uint64_t> m_lastDirtyPublishUs{ 0 };
+	std::atomic<uint64_t> m_lastRepairInvalidateUs{ 0 };
+	std::atomic<bool>     m_waitingIdleRepair{ false };
 	uint64_t              m_nextFrameId{ 1 };
 	uint32_t              m_keyframeInterval{ 120 };
 	uint32_t              m_warmupFullFrames{ 3 };
