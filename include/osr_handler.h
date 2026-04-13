@@ -56,6 +56,7 @@ public:
 
 	void Resize(uint32_t width, uint32_t height);
 	void SetThreadTuningEnabled(bool enabled) { m_enableThreadTuning = enabled; }
+	void SetCadenceFeedbackEnabled(bool enabled) { m_enableCadenceFeedback = enabled; }
 	bool Init();
 	void Shutdown();
 
@@ -87,6 +88,7 @@ private:
 	std::atomic<uint32_t> m_smoothedConsumerCadenceUs{ 0 };
 	std::atomic<bool>     m_forceFullFrame{ true };
 	bool                  m_enableThreadTuning{ true };
+	bool                  m_enableCadenceFeedback{ false };
 	std::atomic<uint64_t> m_lastTelemetryLogUs{ 0 };
 	std::atomic<uint64_t> m_statProducedFrames{ 0 };
 	std::atomic<uint64_t> m_statForcedFullFrames{ 0 };

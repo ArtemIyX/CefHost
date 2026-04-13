@@ -231,3 +231,42 @@ YYYY-MM-DD HH:MM
 ### Impact
 - No functional behavior change; only additional counters/log output.
 - `cmake --build build --config Release` passes after telemetry update.
+
+---
+
+## 2026-04-13 15:46
+
+### Changed
+- Tightened begin-frame throttle in `OsrHandler::TrySendBeginFrame()`:
+  - now gates by current dynamic interval (`m_beginFrameIntervalNs`) instead of fixed `1000us`.
+  - uses CAS loop to avoid races while preserving throttle window.
+- Removed input-loop forced begin-frame trigger:
+  - deleted `TrySendBeginFrame()` call at end of `PumpInput()`.
+
+### Why
+- Prevent producer overrun at 60 Hz scenarios where input activity was effectively bypassing pacing and causing frame-id gaps on consumer side.
+
+### Impact
+- Begin-frame production now follows adaptive cadence consistently.
+- `cmake --build build --config Release` passes after patch.
+
+---
+
+## 2026-04-13 16:08
+
+### Changed
+- Restored low-latency input-triggered begin-frame nudge in `PumpInput()`:
+  - sends an immediate begin frame on interactive input (mouse click/wheel, key down/up, char),
+  - but hard-gated to avoid burst spam (`<= 1 nudge / min(cadence, 2ms)`).
+- Reduced cadence slowdown bias in adaptive pacing from `+5%` to `+1%`.
+- Added host runtime config flag:
+  - `EnableCadenceFeedback` (default `false`).
+  - CLI opt-in: `--enable-cadence-feedback`.
+- `SetConsumerCadenceUs` control event is now ignored unless cadence feedback is enabled.
+
+### Why
+- Fix large input latency caused by over-throttled producer cadence while preserving anti-gap stability.
+
+### Impact
+- Default behavior is latency-first, with optional adaptive pacing opt-in.
+- `cmake --build build --config Release` passes after patch.

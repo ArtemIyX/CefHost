@@ -10,6 +10,7 @@ struct HostRuntimeConfig
 	int32_t FrameRate = 60;
 	std::string StartupUrl = "https://google.com/";
 	bool EnableThreadTuning = true;
+	bool EnableCadenceFeedback = false;
 	bool ShowHelp = false;
 
 	static HostRuntimeConfig FromArgs(int argc, char* argv[]);

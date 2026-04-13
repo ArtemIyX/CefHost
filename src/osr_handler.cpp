@@ -449,10 +449,19 @@ void OsrHandler::TrySendBeginFrame()
 	using namespace std::chrono;
 	uint64_t now = duration_cast<microseconds>(
 		steady_clock::now().time_since_epoch()).count();
+
+	const uint64_t intervalNs = m_beginFrameIntervalNs.load(std::memory_order_relaxed);
+	const uint64_t intervalUs = (intervalNs / 1000ULL > 0ULL) ? (intervalNs / 1000ULL) : 1ULL;
+
 	uint64_t prev = m_lastBeginFrameUs.load(std::memory_order_relaxed);
-	if (now - prev < 1000) return;
-	if (!m_lastBeginFrameUs.compare_exchange_weak(prev, now, std::memory_order_relaxed))
-		return;
+	while (true)
+	{
+		if (now - prev < intervalUs)
+			return;
+		if (m_lastBeginFrameUs.compare_exchange_weak(prev, now, std::memory_order_relaxed))
+			break;
+	}
+
 	CefRefPtr<CefBrowser> b = m_browser;
 	if (b) b->GetHost()->SendExternalBeginFrame();
 }
@@ -479,8 +488,8 @@ void OsrHandler::UpdateBeginFrameIntervalFromConsumerCadenceUs(uint32_t cadenceU
 	const uint32_t smooth = (prev == 0) ? clamped : ((prev * 7u + clamped * 3u) / 10u);
 	m_smoothedConsumerCadenceUs.store(smooth, std::memory_order_relaxed);
 
-	// Keep producer slightly slower than consumer cadence to reduce burst/drop feedback loops.
-	const uint64_t targetUs = static_cast<uint64_t>(smooth) + static_cast<uint64_t>(smooth) / 20ULL;
+	// Keep producer near consumer cadence; tiny slowdown keeps stability without adding visible lag.
+	const uint64_t targetUs = static_cast<uint64_t>(smooth) + static_cast<uint64_t>(smooth) / 100ULL;
 	m_beginFrameIntervalNs.store(targetUs * 1000ULL, std::memory_order_relaxed);
 }
 
@@ -666,6 +675,7 @@ void OsrHandler::PumpInput()
 	if (!browser) return;
 	CefRefPtr<CefBrowserHost> host = browser->GetHost();
 	InputEvent evt;
+	bool shouldNudgeFrame = false;
 	while (m_inputBuffer.ReadEvent(evt))
 	{
 		if (!m_inputEnabled) continue;
@@ -691,6 +701,7 @@ void OsrHandler::PumpInput()
 			CefMouseEvent e; e.x = evt.mouse.x; e.y = evt.mouse.y;
 			e.modifiers = m_mouseModifiers;
 			host->SendMouseClickEvent(e, btn, isUp, 1);
+			shouldNudgeFrame = true;
 			break;
 		}
 		case InputEventType::MouseScroll:
@@ -699,6 +710,7 @@ void OsrHandler::PumpInput()
 			host->SendMouseWheelEvent(e,
 				static_cast<int>(evt.scroll.delta_x),
 				static_cast<int>(evt.scroll.delta_y));
+			shouldNudgeFrame = true;
 			break;
 		}
 		case InputEventType::KeyDown:
@@ -709,6 +721,7 @@ void OsrHandler::PumpInput()
 			e.windows_key_code = static_cast<int>(evt.key.windows_key_code);
 			e.modifiers = evt.key.modifiers;
 			host->SendKeyEvent(e);
+			shouldNudgeFrame = true;
 			break;
 		}
 		case InputEventType::KeyChar:
@@ -717,11 +730,34 @@ void OsrHandler::PumpInput()
 			e.type = KEYEVENT_CHAR;
 			e.windows_key_code = evt.char_event.character;
 			host->SendKeyEvent(e);
+			shouldNudgeFrame = true;
 			break;
 		}
 		}
 	}
-	TrySendBeginFrame();
+
+	if (shouldNudgeFrame && !m_paused.load(std::memory_order_relaxed))
+	{
+		using namespace std::chrono;
+		const uint64_t now = duration_cast<microseconds>(
+			steady_clock::now().time_since_epoch()).count();
+		const uint64_t intervalNs = m_beginFrameIntervalNs.load(std::memory_order_relaxed);
+		const uint64_t cadenceUs = (intervalNs / 1000ULL > 0ULL) ? (intervalNs / 1000ULL) : 1ULL;
+		const uint64_t nudgeUs = (cadenceUs < 2000ULL) ? cadenceUs : 2000ULL;
+
+		uint64_t prev = m_lastBeginFrameUs.load(std::memory_order_relaxed);
+		while (true)
+		{
+			if (now - prev < nudgeUs)
+				break;
+			if (m_lastBeginFrameUs.compare_exchange_weak(prev, now, std::memory_order_relaxed))
+			{
+				CefRefPtr<CefBrowser> b = m_browser;
+				if (b) b->GetHost()->SendExternalBeginFrame();
+				break;
+			}
+		}
+	}
 }
 
 void OsrHandler::PumpControl()
@@ -751,7 +787,8 @@ void OsrHandler::PumpControl()
 			UpdateBeginFrameIntervalFromFps(evt.frame_rate.value);
 			break;
 		case ControlEventType::SetConsumerCadenceUs:
-			UpdateBeginFrameIntervalFromConsumerCadenceUs(evt.cadence_us.value);
+			if (m_enableCadenceFeedback)
+				UpdateBeginFrameIntervalFromConsumerCadenceUs(evt.cadence_us.value);
 			break;
 		case ControlEventType::ScrollTo:
 			browser->GetMainFrame()->ExecuteJavaScript(

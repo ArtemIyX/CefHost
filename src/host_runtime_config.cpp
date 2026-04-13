@@ -45,6 +45,11 @@ HostRuntimeConfig HostRuntimeConfig::FromArgs(int argc, char* argv[])
 			cfg.EnableThreadTuning = false;
 			continue;
 		}
+		if (arg == "--enable-cadence-feedback")
+		{
+			cfg.EnableCadenceFeedback = true;
+			continue;
+		}
 
 		auto split = arg.find('=');
 		auto key = (split == std::string::npos) ? arg : arg.substr(0, split);
@@ -114,5 +119,6 @@ void HostRuntimeConfig::PrintUsage()
 		<< "  --height <value>              Browser height\n"
 		<< "  --fps <1..240>                Windowless frame rate\n"
 		<< "  --no-thread-tuning            Disable thread priority/affinity tuning\n"
+		<< "  --enable-cadence-feedback     Enable consumer-cadence adaptive pacing\n"
 		<< "  -h, --help, /?                Show help\n";
 }
