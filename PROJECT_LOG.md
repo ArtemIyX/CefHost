@@ -189,3 +189,24 @@ YYYY-MM-DD HH:MM
 ### Impact
 - Thread tuning is on by default, optional to disable.
 - `cmake --build build --config Release` passes after change.
+
+---
+
+## 2026-04-13 15:05
+
+### Changed
+- Implemented CEF-side adaptive begin-frame pacing:
+  - `OsrHandler` now uses dynamic render-loop interval (`m_beginFrameIntervalNs`) instead of fixed 60 Hz sleep.
+  - initial interval is derived from configured startup FPS.
+  - frame-rate control (`SetFrameRate`) updates both CEF host frame rate and local begin-frame interval.
+- Added control hook for consumer cadence feedback:
+  - new control event `SetConsumerCadenceUs`.
+  - handler applies smoothed cadence-based interval with slight producer slowdown bias to reduce burst/drop oscillation.
+- Added render-loop drift resync to avoid catch-up bursts after stalls.
+
+### Why
+- Reduce frame burst/drop patterns when producer cadence diverges from actual consumer cadence.
+
+### Impact
+- Host now supports adaptive pacing inputs and better fixed-rate consistency.
+- `cmake --build build --config Release` passes after change.

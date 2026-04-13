@@ -109,7 +109,7 @@ enum class ControlEventType : uint8_t
 	SetPaused = 5, SetHidden = 6, SetFocus = 7, SetZoomLevel = 8,
 	SetFrameRate = 9, ScrollTo = 10, Resize = 11, SetMuted = 12,
 	OpenDevTools = 13, CloseDevTools = 14, SetInputEnabled = 15,
-	ExecuteJS = 16, ClearCookies = 17,
+	ExecuteJS = 16, ClearCookies = 17, SetConsumerCadenceUs = 18,
 };
 
 constexpr uint32_t CONTROL_STRING_MAX = 2048;
@@ -124,6 +124,7 @@ struct ControlEvent
 		struct { int32_t  x;    int32_t  y; }         scroll;
 		struct { float    value; }                     zoom;
 		struct { uint32_t value; }                     frame_rate;
+		struct { uint32_t value; }                     cadence_us;
 		struct { bool     value; }                     flag;
 		struct { char16_t text[CONTROL_STRING_MAX]; } string;
 	};

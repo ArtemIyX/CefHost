@@ -20,7 +20,7 @@ class OsrHandler : public CefClient, public CefLifeSpanHandler, public CefRender
 	public CefContextMenuHandler, public CefDisplayHandler, public CefLoadHandler
 {
 public:
-	OsrHandler(uint32_t width, uint32_t height);
+	OsrHandler(uint32_t width, uint32_t height, uint32_t targetFps = 60);
 	~OsrHandler() = default;
 
 	CefRefPtr<CefRenderHandler>      GetRenderHandler()      override { return this; }
@@ -63,6 +63,8 @@ private:
 	void PumpInput();
 	void PumpControl();
 	void TrySendBeginFrame();
+	void UpdateBeginFrameIntervalFromFps(uint32_t fps);
+	void UpdateBeginFrameIntervalFromConsumerCadenceUs(uint32_t cadenceUs);
 	void StartRenderLoop();
 	void StopRenderLoop();
 	bool EnsureSharedTextures(uint32_t width, uint32_t height, bool* outRecreated = nullptr);
@@ -81,6 +83,8 @@ private:
 	uint32_t              m_mouseModifiers{ 0 };
 	std::atomic<bool>     m_paused{ false };
 	std::atomic<uint64_t> m_lastBeginFrameUs{ 0 };
+	std::atomic<uint64_t> m_beginFrameIntervalNs{ 16666667ULL };
+	std::atomic<uint32_t> m_smoothedConsumerCadenceUs{ 0 };
 	std::atomic<bool>     m_forceFullFrame{ true };
 	bool                  m_enableThreadTuning{ true };
 	uint64_t              m_nextFrameId{ 1 };

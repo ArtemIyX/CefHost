@@ -3,7 +3,8 @@
 
 void CefHostBrowserApp::OnContextInitialized()
 {
-    CefRefPtr<OsrHandler> handler = new OsrHandler(m_config.Width, m_config.Height);
+    CefRefPtr<OsrHandler> handler = new OsrHandler(
+        m_config.Width, m_config.Height, static_cast<uint32_t>(m_config.FrameRate));
     handler->SetThreadTuningEnabled(m_config.EnableThreadTuning);
     if (!handler->Init())
         return;

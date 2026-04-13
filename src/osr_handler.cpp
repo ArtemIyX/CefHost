@@ -66,9 +66,10 @@ void TryPinCurrentThread(uint32_t logicalIndex)
 
 extern D3D11Device g_D3D11Device;
 
-OsrHandler::OsrHandler(uint32_t width, uint32_t height)
+OsrHandler::OsrHandler(uint32_t width, uint32_t height, uint32_t targetFps)
 	: m_width(width), m_height(height)
 {
+	UpdateBeginFrameIntervalFromFps(targetFps);
 }
 
 bool OsrHandler::Init()
@@ -407,6 +408,33 @@ void OsrHandler::TrySendBeginFrame()
 	if (b) b->GetHost()->SendExternalBeginFrame();
 }
 
+void OsrHandler::UpdateBeginFrameIntervalFromFps(uint32_t fps)
+{
+	const uint32_t clamped = (fps < 1u) ? 1u : (fps > 240u ? 240u : fps);
+	const uint64_t intervalNs = 1000000000ULL / static_cast<uint64_t>(clamped);
+	m_beginFrameIntervalNs.store(intervalNs, std::memory_order_relaxed);
+	m_smoothedConsumerCadenceUs.store(0, std::memory_order_relaxed);
+}
+
+void OsrHandler::UpdateBeginFrameIntervalFromConsumerCadenceUs(uint32_t cadenceUs)
+{
+	if (cadenceUs == 0) return;
+
+	const uint32_t minUs = 1000000u / 240u;
+	const uint32_t maxUs = 1000000u / 15u;
+	uint32_t clamped = cadenceUs;
+	if (clamped < minUs) clamped = minUs;
+	if (clamped > maxUs) clamped = maxUs;
+
+	const uint32_t prev = m_smoothedConsumerCadenceUs.load(std::memory_order_relaxed);
+	const uint32_t smooth = (prev == 0) ? clamped : ((prev * 7u + clamped * 3u) / 10u);
+	m_smoothedConsumerCadenceUs.store(smooth, std::memory_order_relaxed);
+
+	// Keep producer slightly slower than consumer cadence to reduce burst/drop feedback loops.
+	const uint64_t targetUs = static_cast<uint64_t>(smooth) + static_cast<uint64_t>(smooth) / 20ULL;
+	m_beginFrameIntervalNs.store(targetUs * 1000ULL, std::memory_order_relaxed);
+}
+
 void OsrHandler::StartRenderLoop()
 {
 	m_running = true;
@@ -421,14 +449,20 @@ void OsrHandler::StartRenderLoop()
 
 			using clock = std::chrono::steady_clock;
 			auto next = clock::now();
-			constexpr auto kFrame = std::chrono::nanoseconds(16666667LL);
 
 			while (m_running)
 			{
+				const uint64_t intervalNs = m_beginFrameIntervalNs.load(std::memory_order_relaxed);
+				const auto kFrame = std::chrono::nanoseconds(static_cast<long long>(intervalNs));
 				next += kFrame;
 				if (!m_paused)
 					TrySendBeginFrame();
 				std::this_thread::sleep_until(next);
+
+				// If scheduler drifts badly (pause/stall), resync to avoid burst catch-up.
+				const auto now = clock::now();
+				if (now > next + kFrame)
+					next = now;
 			}
 		});
 
@@ -664,7 +698,12 @@ void OsrHandler::PumpControl()
 		case ControlEventType::SetZoomLevel:
 			host->SetZoomLevel(static_cast<double>(evt.zoom.value)); break;
 		case ControlEventType::SetFrameRate:
-			host->SetWindowlessFrameRate(static_cast<int>(evt.frame_rate.value)); break;
+			host->SetWindowlessFrameRate(static_cast<int>(evt.frame_rate.value));
+			UpdateBeginFrameIntervalFromFps(evt.frame_rate.value);
+			break;
+		case ControlEventType::SetConsumerCadenceUs:
+			UpdateBeginFrameIntervalFromConsumerCadenceUs(evt.cadence_us.value);
+			break;
 		case ControlEventType::ScrollTo:
 			browser->GetMainFrame()->ExecuteJavaScript(
 				CefString("window.scrollTo(" + std::to_string(evt.scroll.x) + "," +
