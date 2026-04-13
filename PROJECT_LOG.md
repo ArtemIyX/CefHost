@@ -149,3 +149,22 @@ YYYY-MM-DD HH:MM
 ### Impact
 - No behavior change.
 - `cmake --build build --config Release` passes after renames.
+
+---
+
+## 2026-04-13 14:32
+
+### Changed
+- Added explicit shared-protocol handshake fields:
+  - `protocol_magic` in `FrameHeader` (`SHM_PROTOCOL_MAGIC = 'CEFH'`).
+- Host now writes handshake data during init and frame publish.
+- UE reader now validates handshake:
+  - startup check after mapping shared memory (fail-fast with clear log on mismatch).
+  - runtime check in read loop (stop reader on mismatch).
+
+### Why
+- Detect protocol mismatch early and avoid undefined behavior/ghosting from incompatible layouts.
+
+### Impact
+- Clear fail-fast behavior if host/UE protocol versions diverge.
+- `cmake --build build --config Release` passes after host-side handshake update.

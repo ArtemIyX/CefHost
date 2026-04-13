@@ -7,6 +7,7 @@ constexpr uint32_t SHM_MAX_HEIGHT = 2160;
 constexpr uint32_t SHM_FRAME_SIZE = SHM_MAX_WIDTH * SHM_MAX_HEIGHT * 4;
 constexpr uint32_t SHM_FRAME_SLOT_COUNT = 3;
 constexpr uint32_t SHM_PROTOCOL_VERSION = 2;
+constexpr uint32_t SHM_PROTOCOL_MAGIC = 0x43454648; // 'CEFH'
 
 constexpr uint32_t INPUT_RING_CAPACITY = 256;
 constexpr uint32_t CONTROL_RING_CAPACITY = 64;
@@ -55,6 +56,7 @@ enum FrameFlags : uint32_t
 
 struct FrameHeader
 {
+	uint32_t      protocol_magic;
 	uint32_t      version;
 	uint32_t      slot_count;
 	uint32_t      width;

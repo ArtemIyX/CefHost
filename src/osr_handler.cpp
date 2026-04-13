@@ -52,6 +52,7 @@ bool OsrHandler::Init()
 	FrameHeader* header = m_frameBuffer.GetHeader();
 	if (header)
 	{
+		header->protocol_magic = SHM_PROTOCOL_MAGIC;
 		header->version = SHM_PROTOCOL_VERSION;
 		header->slot_count = BUFFER_COUNT;
 		header->write_slot = 0;
@@ -175,6 +176,7 @@ bool OsrHandler::EnsureSharedTextures(uint32_t width, uint32_t height, bool* out
 	FrameHeader* header = m_frameBuffer.GetHeader();
 	if (header)
 	{
+		header->protocol_magic = SHM_PROTOCOL_MAGIC;
 		header->version = SHM_PROTOCOL_VERSION;
 		header->slot_count = BUFFER_COUNT;
 		header->width = width;
@@ -343,6 +345,7 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 		m_writeSlot = backSlot;
 
 		header->version = SHM_PROTOCOL_VERSION;
+		header->protocol_magic = SHM_PROTOCOL_MAGIC;
 		header->slot_count = BUFFER_COUNT;
 		header->width = cefDesc.Width;
 		header->height = cefDesc.Height;

@@ -41,6 +41,7 @@ public:
         memcpy(pixels, bgra_data, data_size);
 
         // Commit: update dimensions and slot, then publish frame.
+        header->protocol_magic = SHM_PROTOCOL_MAGIC;
         header->version = SHM_PROTOCOL_VERSION;
         header->slot_count = slotCount;
         header->width = width;
