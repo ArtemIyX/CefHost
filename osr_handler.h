@@ -12,6 +12,7 @@
 #include <thread>
 #include <atomic>
 #include <mutex>
+#include <array>
 
 using Microsoft::WRL::ComPtr;
 
@@ -63,7 +64,7 @@ private:
 	void TrySendBeginFrame();
 	void StartRenderLoop();
 	void StopRenderLoop();
-	bool EnsureSharedTextures(uint32_t width, uint32_t height);
+	bool EnsureSharedTextures(uint32_t width, uint32_t height, bool* outRecreated = nullptr);
 
 	uint32_t              m_width;
 	uint32_t              m_height;
@@ -79,6 +80,10 @@ private:
 	uint32_t              m_mouseModifiers{ 0 };
 	std::atomic<bool>     m_paused{ false };
 	std::atomic<uint64_t> m_lastBeginFrameUs{ 0 };
+	std::atomic<bool>     m_forceFullFrame{ true };
+	uint64_t              m_nextFrameId{ 1 };
+	uint32_t              m_keyframeInterval{ 120 };
+	uint32_t              m_warmupFullFrames{ 3 };
 
 	CefRect              m_popupRect;
 	CefRect              m_popupClearRect;   // area to refresh from cefTexture after popup hides
@@ -90,10 +95,10 @@ private:
 	uint32_t                m_popupTexWidth  = 0;
 	uint32_t                m_popupTexHeight = 0;
 
-	// Double buffer
-	static constexpr uint32_t BUFFER_COUNT = 2;
-	ComPtr<ID3D11Texture2D> m_sharedTexture[BUFFER_COUNT];
-	HANDLE                  m_sharedNTHandle[BUFFER_COUNT] = { nullptr, nullptr };
+	// Shared texture ring
+	static constexpr uint32_t BUFFER_COUNT = SHM_FRAME_SLOT_COUNT;
+	std::array<ComPtr<ID3D11Texture2D>, BUFFER_COUNT> m_sharedTexture;
+	std::array<HANDLE, BUFFER_COUNT>                  m_sharedNTHandle{};
 	uint32_t                m_writeSlot = 0;
 	uint32_t                m_sharedWidth = 0;
 	uint32_t                m_sharedHeight = 0;

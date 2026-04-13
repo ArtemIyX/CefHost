@@ -51,7 +51,16 @@ bool OsrHandler::Init()
 
 	FrameHeader* header = m_frameBuffer.GetHeader();
 	if (header)
+	{
+		header->version = SHM_PROTOCOL_VERSION;
+		header->slot_count = BUFFER_COUNT;
 		header->write_slot = 0;
+		header->sequence = 0;
+		header->frame_id = 0;
+		header->present_id = 0;
+		header->flags = FRAME_FLAG_FULL_FRAME;
+		header->dirty_count = 0;
+	}
 
 	return true;
 }
@@ -81,10 +90,23 @@ void OsrHandler::Shutdown()
 	m_controlBuffer.Shutdown();
 }
 
-bool OsrHandler::EnsureSharedTextures(uint32_t width, uint32_t height)
+bool OsrHandler::EnsureSharedTextures(uint32_t width, uint32_t height, bool* outRecreated)
 {
-	if (m_sharedTexture[0] && m_sharedTexture[1] &&
-		m_sharedWidth == width && m_sharedHeight == height)
+	if (outRecreated) *outRecreated = false;
+
+	bool ready = (m_sharedWidth == width && m_sharedHeight == height);
+	if (ready)
+	{
+		for (uint32_t i = 0; i < BUFFER_COUNT; ++i)
+		{
+			if (!m_sharedTexture[i])
+			{
+				ready = false;
+				break;
+			}
+		}
+	}
+	if (ready)
 		return true;
 
 	for (uint32_t i = 0; i < BUFFER_COUNT; ++i)
@@ -145,15 +167,24 @@ bool OsrHandler::EnsureSharedTextures(uint32_t width, uint32_t height)
 
 	m_sharedWidth = width;
 	m_sharedHeight = height;
+	m_writeSlot = 0;
+	m_forceFullFrame.store(true, std::memory_order_relaxed);
+	m_warmupFullFrames = 3;
+	if (outRecreated) *outRecreated = true;
 
 	FrameHeader* header = m_frameBuffer.GetHeader();
 	if (header)
 	{
+		header->version = SHM_PROTOCOL_VERSION;
+		header->slot_count = BUFFER_COUNT;
 		header->width = width;
 		header->height = height;
+		header->write_slot = m_writeSlot;
+		header->flags = FRAME_FLAG_FULL_FRAME | FRAME_FLAG_RESIZED;
+		header->dirty_count = 0;
 	}
 
-	fprintf(stdout, "[OsrHandler] Double-buffered shared textures created %ux%u\n", width, height);
+	fprintf(stdout, "[OsrHandler] Shared textures created: slots=%u size=%ux%u\n", BUFFER_COUNT, width, height);
 	return true;
 }
 
@@ -222,10 +253,11 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 
 	std::lock_guard<std::mutex> lock(m_textureMutex);
 
-	if (!EnsureSharedTextures(cefDesc.Width, cefDesc.Height))
+	bool recreated = false;
+	if (!EnsureSharedTextures(cefDesc.Width, cefDesc.Height, &recreated))
 		return;
 
-	const uint32_t backSlot = 1u - m_writeSlot;
+	const uint32_t backSlot = (m_writeSlot + 1u) % BUFFER_COUNT;
 
 	// Full copy CEF texture to back buffer. The old approach (dirty-rect copy +
 	// post-flip sync-back) raced with UE5: the sync-back wrote to the old front
@@ -274,23 +306,51 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 		}
 	}
 
-	context->Flush();
-	m_writeSlot = backSlot;
-
 	FrameHeader* header = m_frameBuffer.GetHeader();
 	if (header)
 	{
-		if (!overflow)
+		uint32_t frameFlags = FRAME_FLAG_NONE;
+		bool forceFull = m_forceFullFrame.exchange(false, std::memory_order_relaxed);
+		if (recreated)
+			frameFlags |= FRAME_FLAG_RESIZED;
+		if (m_warmupFullFrames > 0)
 		{
+			forceFull = true;
+			--m_warmupFullFrames;
+		}
+		if (m_keyframeInterval > 0 && (m_nextFrameId % m_keyframeInterval) == 0)
+			forceFull = true;
+		if (overflow)
+		{
+			forceFull = true;
+			frameFlags |= FRAME_FLAG_OVERFLOW;
+		}
+
+		if (forceFull)
+		{
+			frameFlags |= FRAME_FLAG_FULL_FRAME;
+			header->dirty_count = 0;
+		}
+		else
+		{
+			frameFlags |= FRAME_FLAG_DIRTY_ONLY;
 			header->dirty_count = static_cast<uint8_t>(nRects);
 			for (uint32_t i = 0; i < nRects; ++i)
 				header->dirty_rects[i] = collectedRects[i];
 		}
-		else
-		{
-			header->dirty_count = 0;
-		}
+
+		context->Flush();
+		m_writeSlot = backSlot;
+
+		header->version = SHM_PROTOCOL_VERSION;
+		header->slot_count = BUFFER_COUNT;
+		header->width = cefDesc.Width;
+		header->height = cefDesc.Height;
 		header->write_slot = m_writeSlot;
+		header->flags = frameFlags;
+		header->present_id = m_nextFrameId;
+		header->frame_id = m_nextFrameId++;
+		std::atomic_thread_fence(std::memory_order_release);
 		header->sequence++;
 		SetEvent(m_frameBuffer.GetEvent());
 	}
@@ -459,6 +519,8 @@ void OsrHandler::Resize(uint32_t width, uint32_t height)
 {
 	m_width = width;
 	m_height = height;
+	m_forceFullFrame.store(true, std::memory_order_relaxed);
+	m_warmupFullFrames = 3;
 	if (m_browser)
 		m_browser->GetHost()->WasResized();
 }

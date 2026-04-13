@@ -5,6 +5,8 @@
 constexpr uint32_t SHM_MAX_WIDTH = 3840;
 constexpr uint32_t SHM_MAX_HEIGHT = 2160;
 constexpr uint32_t SHM_FRAME_SIZE = SHM_MAX_WIDTH * SHM_MAX_HEIGHT * 4;
+constexpr uint32_t SHM_FRAME_SLOT_COUNT = 3;
+constexpr uint32_t SHM_PROTOCOL_VERSION = 2;
 
 constexpr uint32_t INPUT_RING_CAPACITY = 256;
 constexpr uint32_t CONTROL_RING_CAPACITY = 64;
@@ -42,20 +44,34 @@ constexpr uint32_t MAX_DIRTY_RECTS = 16;
 
 struct DirtyRect { int32_t x, y, w, h; };
 
+enum FrameFlags : uint32_t
+{
+	FRAME_FLAG_NONE       = 0,
+	FRAME_FLAG_FULL_FRAME = 1u << 0,
+	FRAME_FLAG_DIRTY_ONLY = 1u << 1,
+	FRAME_FLAG_OVERFLOW   = 1u << 2,
+	FRAME_FLAG_RESIZED    = 1u << 3,
+};
+
 struct FrameHeader
 {
+	uint32_t      version;
+	uint32_t      slot_count;
 	uint32_t      width;
 	uint32_t      height;
+	uint64_t      frame_id;
+	uint64_t      present_id;
 	uint32_t      sequence;
 	uint32_t      write_slot;
+	uint32_t      flags;
 	CefCursorType cursor_type;
 	CefLoadState  load_state;
 	uint8_t       dirty_count; // 0 = full frame
-	uint8_t       reserved;
+	uint8_t       reserved[3];
 	DirtyRect     dirty_rects[MAX_DIRTY_RECTS];
 };
 // Pixel buffers kept for layout compat but unused in GPU path
-constexpr uint32_t SHM_FRAME_TOTAL = sizeof(FrameHeader) + SHM_FRAME_SIZE * 2;
+constexpr uint32_t SHM_FRAME_TOTAL = sizeof(FrameHeader) + SHM_FRAME_SIZE * SHM_FRAME_SLOT_COUNT;
 
 enum class InputEventType : uint8_t
 {

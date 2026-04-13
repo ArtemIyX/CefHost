@@ -2,6 +2,7 @@
 #include "SharedMemoryLayout.h"
 #include <Windows.h>
 #include <cstring>
+#include <atomic>
 
 class FrameBuffer
 {
@@ -28,20 +29,26 @@ public:
 
         FrameHeader* header = reinterpret_cast<FrameHeader*>(m_pData);
 
-        // Write into the slot that is NOT currently being read.
-        const uint32_t writeSlot = 1u - (header->write_slot & 1u);
+        uint32_t slotCount = header->slot_count;
+        if (slotCount == 0 || slotCount > SHM_FRAME_SLOT_COUNT)
+            slotCount = SHM_FRAME_SLOT_COUNT;
+
+        const uint32_t writeSlot = (header->write_slot + 1u) % slotCount;
 
         uint8_t* pixels = reinterpret_cast<uint8_t*>(m_pData) + sizeof(FrameHeader)
             + static_cast<size_t>(writeSlot) * SHM_FRAME_SIZE;
         memcpy(pixels, bgra_data, data_size);
 
-        // Commit: update dimensions and flip slot atomically-ish via sequence bump.
-        // Reader always checks sequence first, then reads write_slot.
+        // Commit: update dimensions and slot, then publish frame.
+        header->version = SHM_PROTOCOL_VERSION;
+        header->slot_count = slotCount;
         header->width = width;
         header->height = height;
         header->write_slot = writeSlot;
-        _WriteBarrier();          // MSVC: prevent reorder before slot/dims are visible
+        std::atomic_thread_fence(std::memory_order_release);
         header->sequence++;
+        header->frame_id++;
+        header->present_id = header->frame_id;
 
         SetEvent(m_hEvent);
     }
