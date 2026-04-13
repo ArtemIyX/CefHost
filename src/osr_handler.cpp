@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <d3d11.h>
+#include <d3d11_4.h>
 #include <dxgi1_2.h>
 #include <dxgiformat.h>
 #include <handleapi.h>
@@ -85,6 +86,38 @@ bool OsrHandler::Init()
 		return false;
 	}
 
+	ComPtr<ID3D11Device5> device5;
+	if (SUCCEEDED(g_D3D11Device.GetDevice()->QueryInterface(IID_PPV_ARGS(&device5))))
+	{
+		ComPtr<ID3D11DeviceContext4> context4;
+		if (SUCCEEDED(g_D3D11Device.GetContext()->QueryInterface(IID_PPV_ARGS(&context4))))
+		{
+			ComPtr<ID3D11Fence> fence;
+			hr = device5->CreateFence(0, D3D11_FENCE_FLAG_SHARED, IID_PPV_ARGS(&fence));
+			if (SUCCEEDED(hr))
+			{
+				HANDLE fenceHandle = nullptr;
+				hr = fence->CreateSharedHandle(nullptr, GENERIC_ALL, SHM_GPU_FENCE_NAME, &fenceHandle);
+				if (SUCCEEDED(hr))
+				{
+					m_device5 = device5;
+					m_context4 = context4;
+					m_sharedFence = fence;
+					m_sharedFenceHandle = fenceHandle;
+					fprintf(stdout, "[OsrHandler] Shared GPU fence created: %ls\n", SHM_GPU_FENCE_NAME);
+				}
+				else
+				{
+					fprintf(stderr, "[OsrHandler] CreateSharedHandle(fence) failed: 0x%08X\n", hr);
+				}
+			}
+			else
+			{
+				fprintf(stderr, "[OsrHandler] CreateFence failed: 0x%08X\n", hr);
+			}
+		}
+	}
+
 	FrameHeader* header = m_frameBuffer.GetHeader();
 	if (header)
 	{
@@ -95,6 +128,7 @@ bool OsrHandler::Init()
 		header->sequence = 0;
 		header->frame_id = 0;
 		header->present_id = 0;
+		header->gpu_fence_value = 0;
 		header->flags = FRAME_FLAG_FULL_FRAME;
 		header->dirty_count = 0;
 	}
@@ -121,6 +155,14 @@ void OsrHandler::Shutdown()
 
 	m_cachedTextureView.Reset();  m_cachedHandleView  = nullptr;
 	m_cachedTexturePopup.Reset(); m_cachedHandlePopup = nullptr;
+	if (m_sharedFenceHandle)
+	{
+		CloseHandle(m_sharedFenceHandle);
+		m_sharedFenceHandle = nullptr;
+	}
+	m_sharedFence.Reset();
+	m_context4.Reset();
+	m_device5.Reset();
 
 	m_frameBuffer.Shutdown();
 	m_inputBuffer.Shutdown();
@@ -218,6 +260,7 @@ bool OsrHandler::EnsureSharedTextures(uint32_t width, uint32_t height, bool* out
 		header->width = width;
 		header->height = height;
 		header->write_slot = m_writeSlot;
+		header->gpu_fence_value = 0;
 		header->flags = FRAME_FLAG_FULL_FRAME | FRAME_FLAG_RESIZED;
 		header->dirty_count = 0;
 	}
@@ -391,7 +434,25 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 			m_lastDirtyPublishUs.store(copyStartUs, std::memory_order_relaxed);
 		}
 
-		context->Flush();
+		uint64_t gpuFenceValue = 0;
+		bool signaledFence = false;
+		if (m_context4 && m_sharedFence)
+		{
+			gpuFenceValue = m_nextGpuFenceValue++;
+			HRESULT shr = m_context4->Signal(m_sharedFence.Get(), gpuFenceValue);
+			signaledFence = SUCCEEDED(shr);
+			if (!signaledFence)
+				gpuFenceValue = 0;
+		}
+
+		++m_framesSinceFlush;
+		const bool shouldFlush = !signaledFence || recreated || forceFull || (m_framesSinceFlush >= m_flushIntervalFrames);
+		if (shouldFlush)
+		{
+			context->Flush();
+			m_framesSinceFlush = 0;
+		}
+
 		m_writeSlot = backSlot;
 
 		header->version = SHM_PROTOCOL_VERSION;
@@ -402,6 +463,7 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 		header->write_slot = m_writeSlot;
 		header->flags = frameFlags;
 		header->present_id = m_nextFrameId;
+		header->gpu_fence_value = gpuFenceValue;
 		header->frame_id = m_nextFrameId++;
 		std::atomic_thread_fence(std::memory_order_release);
 		header->sequence++;

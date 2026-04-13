@@ -6,7 +6,7 @@ constexpr uint32_t SHM_MAX_WIDTH = 3840;
 constexpr uint32_t SHM_MAX_HEIGHT = 2160;
 constexpr uint32_t SHM_FRAME_SIZE = SHM_MAX_WIDTH * SHM_MAX_HEIGHT * 4;
 constexpr uint32_t SHM_FRAME_SLOT_COUNT = 3;
-constexpr uint32_t SHM_PROTOCOL_VERSION = 2;
+constexpr uint32_t SHM_PROTOCOL_VERSION = 3;
 constexpr uint32_t SHM_PROTOCOL_MAGIC = 0x43454648; // 'CEFH'
 
 constexpr uint32_t INPUT_RING_CAPACITY = 256;
@@ -19,6 +19,7 @@ constexpr const wchar_t* EVT_INPUT_READY = L"CEFHost_InputReady";
 constexpr const wchar_t* SHM_CONTROL_NAME = L"CEFHost_Control";
 constexpr const wchar_t* EVT_CONTROL_READY = L"CEFHost_ControlReady";
 constexpr const wchar_t* EVT_SHUTDOWN = L"CEFHost_Shutdown";
+constexpr const wchar_t* SHM_GPU_FENCE_NAME = L"Global\\CEFHost_SharedFence";
 
 enum class CefCursorType : uint8_t
 {
@@ -63,6 +64,7 @@ struct FrameHeader
 	uint32_t      height;
 	uint64_t      frame_id;
 	uint64_t      present_id;
+	uint64_t      gpu_fence_value;
 	uint32_t      sequence;
 	uint32_t      write_slot;
 	uint32_t      flags;

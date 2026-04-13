@@ -8,6 +8,7 @@
 #include "D3D11Device.h"
 #include <d3d11_1.h>
 #include <dxgi1_2.h>
+#include <d3d11_4.h>
 #include <wrl/client.h>
 #include <thread>
 #include <atomic>
@@ -101,9 +102,12 @@ private:
 	std::atomic<uint64_t> m_lastDirtyPublishUs{ 0 };
 	std::atomic<uint64_t> m_lastRepairInvalidateUs{ 0 };
 	std::atomic<bool>     m_waitingIdleRepair{ false };
+	uint64_t              m_framesSinceFlush{ 0 };
 	uint64_t              m_nextFrameId{ 1 };
+	uint64_t              m_nextGpuFenceValue{ 1 };
 	uint32_t              m_keyframeInterval{ 120 };
 	uint32_t              m_warmupFullFrames{ 3 };
+	uint32_t              m_flushIntervalFrames{ 4 };
 
 	CefRect              m_popupRect;
 	CefRect              m_popupClearRect;   // area to refresh from cefTexture after popup hides
@@ -125,6 +129,10 @@ private:
 	std::mutex              m_textureMutex;
 
 	ComPtr<ID3D11Device1> m_device1;
+	ComPtr<ID3D11Device5> m_device5;
+	ComPtr<ID3D11DeviceContext4> m_context4;
+	ComPtr<ID3D11Fence>   m_sharedFence;
+	HANDLE                m_sharedFenceHandle = nullptr;
 
 	// Cache last opened shared texture per paint type to avoid OpenSharedResource1 on every frame
 	HANDLE                  m_cachedHandleView  = nullptr;

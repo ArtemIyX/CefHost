@@ -287,3 +287,24 @@ YYYY-MM-DD HH:MM
 ### Impact
 - Adds conservative self-heal path for static ghost artifacts with low overhead.
 - `cmake --build build --config Release` passes after patch.
+
+---
+
+## 2026-04-13 17:05
+
+### Changed
+- Upgraded SHM frame protocol to v3:
+  - added `gpu_fence_value` to `FrameHeader`.
+- Added host-side shared GPU fence (`Global\\CEFHost_SharedFence`):
+  - create `ID3D11Fence` via `ID3D11Device5`,
+  - publish per-frame fence value after copy via `ID3D11DeviceContext4::Signal`.
+- Reduced `context->Flush()` pressure:
+  - no longer unconditional per frame,
+  - flush on fallback paths and periodic interval (`m_flushIntervalFrames`), while fence signal is primary GPU completion path.
+
+### Why
+- Lower producer stalls from per-frame flush while providing explicit GPU completion ordering for cross-process consumer reads.
+
+### Impact
+- Better pacing under load and stronger producer->consumer correctness semantics.
+- `cmake --build build --config Release` passes after patch.
