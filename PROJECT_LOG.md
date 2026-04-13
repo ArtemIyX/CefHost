@@ -168,3 +168,24 @@ YYYY-MM-DD HH:MM
 ### Impact
 - Clear fail-fast behavior if host/UE protocol versions diverge.
 - `cmake --build build --config Release` passes after host-side handshake update.
+
+---
+
+## 2026-04-13 14:50
+
+### Changed
+- Added optional thread tuning in host runtime config:
+  - new flag `EnableThreadTuning` (default `true`)
+  - new CLI option `--no-thread-tuning` to disable.
+- Wired thread tuning into host app setup:
+  - `CefHostBrowserApp` passes config into `OsrHandler`.
+- `OsrHandler` now conditionally applies tuning in render/input/control threads:
+  - priority tuning (render/control above normal, input highest)
+  - CPU affinity pinning to stable logical cores (best-effort).
+
+### Why
+- Reduce scheduling jitter for frame production/input handling while keeping a one-flag opt-out.
+
+### Impact
+- Thread tuning is on by default, optional to disable.
+- `cmake --build build --config Release` passes after change.

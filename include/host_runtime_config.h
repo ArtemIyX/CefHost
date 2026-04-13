@@ -9,6 +9,7 @@ struct HostRuntimeConfig
 	uint32_t Height = 1080;
 	int32_t FrameRate = 60;
 	std::string StartupUrl = "https://google.com/";
+	bool EnableThreadTuning = true;
 	bool ShowHelp = false;
 
 	static HostRuntimeConfig FromArgs(int argc, char* argv[]);

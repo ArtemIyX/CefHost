@@ -40,6 +40,11 @@ HostRuntimeConfig HostRuntimeConfig::FromArgs(int argc, char* argv[])
 			cfg.ShowHelp = true;
 			continue;
 		}
+		if (arg == "--no-thread-tuning")
+		{
+			cfg.EnableThreadTuning = false;
+			continue;
+		}
 
 		auto split = arg.find('=');
 		auto key = (split == std::string::npos) ? arg : arg.substr(0, split);
@@ -108,5 +113,6 @@ void HostRuntimeConfig::PrintUsage()
 		<< "  --width <value>               Browser width\n"
 		<< "  --height <value>              Browser height\n"
 		<< "  --fps <1..240>                Windowless frame rate\n"
+		<< "  --no-thread-tuning            Disable thread priority/affinity tuning\n"
 		<< "  -h, --help, /?                Show help\n";
 }

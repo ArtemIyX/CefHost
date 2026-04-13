@@ -55,6 +55,7 @@ public:
 	void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
 
 	void Resize(uint32_t width, uint32_t height);
+	void SetThreadTuningEnabled(bool enabled) { m_enableThreadTuning = enabled; }
 	bool Init();
 	void Shutdown();
 
@@ -81,6 +82,7 @@ private:
 	std::atomic<bool>     m_paused{ false };
 	std::atomic<uint64_t> m_lastBeginFrameUs{ 0 };
 	std::atomic<bool>     m_forceFullFrame{ true };
+	bool                  m_enableThreadTuning{ true };
 	uint64_t              m_nextFrameId{ 1 };
 	uint32_t              m_keyframeInterval{ 120 };
 	uint32_t              m_warmupFullFrames{ 3 };

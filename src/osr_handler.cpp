@@ -28,6 +28,41 @@
 #include <Windows.h>
 #include <wrl/client.h>
 
+namespace
+{
+ULONG_PTR SelectAffinityMask(ULONG_PTR processMask, uint32_t logicalIndex)
+{
+	if (processMask == 0) return 0;
+	uint32_t count = 0;
+	for (uint32_t i = 0; i < sizeof(ULONG_PTR) * 8; ++i)
+	{
+		if (processMask & (static_cast<ULONG_PTR>(1) << i))
+			++count;
+	}
+	if (count == 0) return 0;
+	const uint32_t target = logicalIndex % count;
+	uint32_t seen = 0;
+	for (uint32_t i = 0; i < sizeof(ULONG_PTR) * 8; ++i)
+	{
+		const ULONG_PTR bit = static_cast<ULONG_PTR>(1) << i;
+		if ((processMask & bit) == 0) continue;
+		if (seen == target) return bit;
+		++seen;
+	}
+	return 0;
+}
+
+void TryPinCurrentThread(uint32_t logicalIndex)
+{
+	ULONG_PTR processMask = 0, systemMask = 0;
+	if (!GetProcessAffinityMask(GetCurrentProcess(), &processMask, &systemMask))
+		return;
+	const ULONG_PTR mask = SelectAffinityMask(processMask, logicalIndex);
+	if (mask != 0)
+		SetThreadAffinityMask(GetCurrentThread(), mask);
+}
+}
+
 
 extern D3D11Device g_D3D11Device;
 
@@ -378,6 +413,12 @@ void OsrHandler::StartRenderLoop()
 
 	m_renderThread = std::thread([this]()
 		{
+			if (m_enableThreadTuning)
+			{
+				SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
+				TryPinCurrentThread(0);
+			}
+
 			using clock = std::chrono::steady_clock;
 			auto next = clock::now();
 			constexpr auto kFrame = std::chrono::nanoseconds(16666667LL);
@@ -393,7 +434,11 @@ void OsrHandler::StartRenderLoop()
 
 	m_inputThread = std::thread([this]()
 		{
-			SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+			if (m_enableThreadTuning)
+			{
+				SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+				TryPinCurrentThread(1);
+			}
 
 			LARGE_INTEGER freq, start, now;
 			QueryPerformanceFrequency(&freq);
@@ -428,7 +473,11 @@ void OsrHandler::StartRenderLoop()
 
 	m_controlThread = std::thread([this]()
 		{
-			SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
+			if (m_enableThreadTuning)
+			{
+				SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
+				TryPinCurrentThread(2);
+			}
 			while (m_running)
 			{
 				WaitForSingleObject(m_controlBuffer.GetEvent(), 100);
