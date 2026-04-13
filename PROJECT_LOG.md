@@ -295,3 +295,22 @@ YYYY-MM-DD HH:MM
 
 ### Impact
 - Better pacing under load and stronger producer->consumer correctness semantics.
+
+---
+
+## 2026-04-13 17:42
+
+### Changed
+- Fixed dedicated popup-plane update path in `OsrHandler`:
+  - `PET_POPUP` now publishes frame metadata/event (`frame_id`/`sequence`) instead of waiting for next `PET_VIEW`.
+  - popup-only updates now copy popup rect into `Global\\CEFHost_SharedPopupTex` and signal GPU fence for that publish.
+- Reduced popup hover latency in input path:
+  - `MouseMove` now triggers begin-frame nudge while popup is visible (same gated nudge path used for interactive input).
+
+### Why
+- Popup hover state (combobox/select overlays) could appear stale/laggy because popup paints were cached but not published immediately.
+- Mouse move over popup items needed faster frame triggering to feel responsive.
+
+### Impact
+- Popup overlay updates now arrive immediately on popup paint events.
+- Dropdown hover feedback is visibly smoother with lower perceived lag.

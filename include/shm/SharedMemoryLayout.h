@@ -6,7 +6,7 @@ constexpr uint32_t SHM_MAX_WIDTH = 3840;
 constexpr uint32_t SHM_MAX_HEIGHT = 2160;
 constexpr uint32_t SHM_FRAME_SIZE = SHM_MAX_WIDTH * SHM_MAX_HEIGHT * 4;
 constexpr uint32_t SHM_FRAME_SLOT_COUNT = 3;
-constexpr uint32_t SHM_PROTOCOL_VERSION = 3;
+constexpr uint32_t SHM_PROTOCOL_VERSION = 4;
 constexpr uint32_t SHM_PROTOCOL_MAGIC = 0x43454648; // 'CEFH'
 
 constexpr uint32_t INPUT_RING_CAPACITY = 256;
@@ -53,6 +53,7 @@ enum FrameFlags : uint32_t
 	FRAME_FLAG_DIRTY_ONLY = 1u << 1,
 	FRAME_FLAG_OVERFLOW   = 1u << 2,
 	FRAME_FLAG_RESIZED    = 1u << 3,
+	FRAME_FLAG_POPUP_PLANE= 1u << 4,
 };
 
 struct FrameHeader
@@ -70,8 +71,10 @@ struct FrameHeader
 	uint32_t      flags;
 	CefCursorType cursor_type;
 	CefLoadState  load_state;
+	uint8_t       popup_visible;
 	uint8_t       dirty_count; // 0 = full frame
-	uint8_t       reserved[3];
+	uint8_t       reserved[2];
+	DirtyRect     popup_rect;
 	DirtyRect     dirty_rects[MAX_DIRTY_RECTS];
 };
 // Pixel buffers kept for layout compat but unused in GPU path
@@ -112,6 +115,7 @@ enum class ControlEventType : uint8_t
 	SetFrameRate = 9, ScrollTo = 10, Resize = 11, SetMuted = 12,
 	OpenDevTools = 13, CloseDevTools = 14, SetInputEnabled = 15,
 	ExecuteJS = 16, ClearCookies = 17, SetConsumerCadenceUs = 18,
+	SetMaxInFlightBeginFrames = 19, SetFlushIntervalFrames = 20, SetKeyframeIntervalUs = 21,
 };
 
 constexpr uint32_t CONTROL_STRING_MAX = 2048;

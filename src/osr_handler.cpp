@@ -13,6 +13,7 @@
 #include "include/internal/cef_win.h"
 #include "osr_handler.h"
 #include "shm/SharedMemoryLayout.h"
+#include <algorithm>
 #include <chrono>
 #include <combaseapi.h>
 #include <cstdint>
@@ -130,6 +131,8 @@ bool OsrHandler::Init()
 		header->present_id = 0;
 		header->gpu_fence_value = 0;
 		header->flags = FRAME_FLAG_FULL_FRAME;
+		header->popup_visible = 0;
+		header->popup_rect = { 0,0,0,0 };
 		header->dirty_count = 0;
 	}
 
@@ -151,6 +154,12 @@ void OsrHandler::Shutdown()
 			}
 			m_sharedTexture[i].Reset();
 		}
+		if (m_sharedPopupHandle)
+		{
+			CloseHandle(m_sharedPopupHandle);
+			m_sharedPopupHandle = nullptr;
+		}
+		m_sharedPopupTexture.Reset();
 	}
 
 	m_cachedTextureView.Reset();  m_cachedHandleView  = nullptr;
@@ -244,6 +253,39 @@ bool OsrHandler::EnsureSharedTextures(uint32_t width, uint32_t height, bool* out
 		fprintf(stdout, "[OsrHandler] Created named shared handle[%u]: %ls\n", i, name);
 	}
 
+	// Dedicated popup plane texture (same size as view; UE copies only popup rect).
+	{
+		if (m_sharedPopupHandle)
+		{
+			CloseHandle(m_sharedPopupHandle);
+			m_sharedPopupHandle = nullptr;
+		}
+		m_sharedPopupTexture.Reset();
+
+		HRESULT hr = device->CreateTexture2D(&desc, nullptr, &m_sharedPopupTexture);
+		if (FAILED(hr))
+		{
+			fprintf(stderr, "[OsrHandler] CreateTexture2D popup plane failed: 0x%08X\n", hr);
+			return false;
+		}
+
+		ComPtr<IDXGIResource1> popupDxgi;
+		hr = m_sharedPopupTexture.As(&popupDxgi);
+		if (FAILED(hr))
+		{
+			fprintf(stderr, "[OsrHandler] IDXGIResource1 popup plane failed: 0x%08X\n", hr);
+			return false;
+		}
+
+		hr = popupDxgi->CreateSharedHandle(nullptr, DXGI_SHARED_RESOURCE_READ,
+			L"Global\\CEFHost_SharedPopupTex", &m_sharedPopupHandle);
+		if (FAILED(hr))
+		{
+			fprintf(stderr, "[OsrHandler] CreateSharedHandle popup plane failed: 0x%08X\n", hr);
+			return false;
+		}
+	}
+
 	m_sharedWidth = width;
 	m_sharedHeight = height;
 	m_writeSlot = 0;
@@ -262,6 +304,8 @@ bool OsrHandler::EnsureSharedTextures(uint32_t width, uint32_t height, bool* out
 		header->write_slot = m_writeSlot;
 		header->gpu_fence_value = 0;
 		header->flags = FRAME_FLAG_FULL_FRAME | FRAME_FLAG_RESIZED;
+		header->popup_visible = 0;
+		header->popup_rect = { 0,0,0,0 };
 		header->dirty_count = 0;
 	}
 
@@ -305,8 +349,7 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 
 	if (type == PET_POPUP)
 	{
-		// Only cache popup content. PET_VIEW composites it into shared textures,
-		// eliminating the duplicate Flush/writeSlot-flip/SetEvent per frame.
+		std::lock_guard<std::mutex> lock(m_textureMutex);
 		std::lock_guard<std::mutex> popupLock(m_popupTextureMutex);
 
 		if (!m_popupTexture || m_popupTexWidth != cefDesc.Width || m_popupTexHeight != cefDesc.Height)
@@ -332,6 +375,77 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 		}
 
 		context->CopyResource(m_popupTexture.Get(), cefTexture.Get());
+
+		// In dedicated popup-plane mode publish popup-only frames as well.
+		// Without this, hover-only popup updates can stall until a PET_VIEW arrives.
+		if (m_usePopupDedicatedPlane && m_sharedPopupTexture && m_sharedWidth > 0 && m_sharedHeight > 0)
+		{
+			const bool popupVisible = m_popupVisible.load(std::memory_order_relaxed);
+			const CefRect pr = popupVisible ? m_popupRect : m_popupClearRect;
+			const int32_t x0 = std::max(0, std::min(pr.x, static_cast<int32_t>(m_sharedWidth)));
+			const int32_t y0 = std::max(0, std::min(pr.y, static_cast<int32_t>(m_sharedHeight)));
+			const int32_t x1 = std::max(0, std::min(pr.x + pr.width, static_cast<int32_t>(m_sharedWidth)));
+			const int32_t y1 = std::max(0, std::min(pr.y + pr.height, static_cast<int32_t>(m_sharedHeight)));
+			const bool validRect = (x1 > x0 && y1 > y0);
+
+			if (popupVisible && validRect)
+			{
+				D3D11_BOX box = {
+					0, 0, 0,
+					static_cast<UINT>(x1 - x0), static_cast<UINT>(y1 - y0), 1
+				};
+				context->CopySubresourceRegion(m_sharedPopupTexture.Get(), 0, x0, y0, 0, m_popupTexture.Get(), 0, &box);
+			}
+
+			uint64_t gpuFenceValue = 0;
+			bool signaledFence = false;
+			if (m_context4 && m_sharedFence)
+			{
+				gpuFenceValue = m_nextGpuFenceValue++;
+				HRESULT shr = m_context4->Signal(m_sharedFence.Get(), gpuFenceValue);
+				signaledFence = SUCCEEDED(shr);
+				if (!signaledFence)
+					gpuFenceValue = 0;
+			}
+			if (!signaledFence)
+				context->Flush();
+
+			FrameHeader* header = m_frameBuffer.GetHeader();
+			if (header)
+			{
+				header->version = SHM_PROTOCOL_VERSION;
+				header->protocol_magic = SHM_PROTOCOL_MAGIC;
+				header->slot_count = BUFFER_COUNT;
+				header->width = m_sharedWidth;
+				header->height = m_sharedHeight;
+				header->write_slot = m_writeSlot;
+				header->flags = FRAME_FLAG_POPUP_PLANE | FRAME_FLAG_DIRTY_ONLY;
+				header->popup_visible = popupVisible ? 1 : 0;
+				header->popup_rect = { m_popupRect.x, m_popupRect.y, m_popupRect.width, m_popupRect.height };
+				header->present_id = m_nextFrameId;
+				header->gpu_fence_value = gpuFenceValue;
+				header->frame_id = m_nextFrameId++;
+
+				if (validRect)
+				{
+					header->dirty_count = 1;
+					header->dirty_rects[0] = { x0, y0, x1 - x0, y1 - y0 };
+				}
+				else
+				{
+					header->dirty_count = 0;
+				}
+
+				std::atomic_thread_fence(std::memory_order_release);
+				header->sequence++;
+				SetEvent(m_frameBuffer.GetEvent());
+				m_statProducedFrames.fetch_add(1, std::memory_order_relaxed);
+				m_paintsCompleted.fetch_add(1, std::memory_order_relaxed);
+			}
+
+			if (!popupVisible)
+				m_popupClearRect = {};
+		}
 		return;
 	}
 
@@ -366,7 +480,8 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 	for (const auto& r : dirtyRects)
 		addDirty(r.x, r.y, r.width, r.height);
 
-	// Track popup area as dirty for consumer
+	// Track popup area as dirty for consumer only when popup is composited into main plane.
+	if (!m_usePopupDedicatedPlane)
 	{
 		const CefRect& pr = m_popupVisible ? m_popupRect : m_popupClearRect;
 		if (pr.width > 0 && pr.height > 0)
@@ -377,8 +492,8 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 		}
 	}
 
-	// Composite popup on back buffer
-	if (m_popupVisible)
+	// Composite popup on main back buffer (legacy mode).
+	if (!m_usePopupDedicatedPlane && m_popupVisible)
 	{
 		std::lock_guard<std::mutex> popupLock(m_popupTextureMutex);
 		if (m_popupTexture && m_popupRect.width > 0 && m_popupRect.height > 0)
@@ -392,6 +507,21 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 		}
 	}
 
+	// Dedicated popup plane: copy popup texture into shared popup plane texture.
+	if (m_usePopupDedicatedPlane && m_popupVisible)
+	{
+		std::lock_guard<std::mutex> popupLock(m_popupTextureMutex);
+		if (m_sharedPopupTexture && m_popupTexture && m_popupRect.width > 0 && m_popupRect.height > 0)
+		{
+			D3D11_BOX box = {
+				0, 0, 0,
+				static_cast<UINT>(m_popupRect.width), static_cast<UINT>(m_popupRect.height), 1
+			};
+			context->CopySubresourceRegion(m_sharedPopupTexture.Get(), 0,
+				m_popupRect.x, m_popupRect.y, 0, m_popupTexture.Get(), 0, &box);
+		}
+	}
+
 	FrameHeader* header = m_frameBuffer.GetHeader();
 	if (header)
 	{
@@ -399,6 +529,8 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 		bool forceFull = m_forceFullFrame.exchange(false, std::memory_order_relaxed);
 		if (recreated)
 			frameFlags |= FRAME_FLAG_RESIZED;
+		if (m_usePopupDedicatedPlane)
+			frameFlags |= FRAME_FLAG_POPUP_PLANE;
 		if (m_warmupFullFrames > 0)
 		{
 			forceFull = true;
@@ -406,10 +538,11 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 		}
 		if (m_keyframeInterval > 0 && (m_nextFrameId % m_keyframeInterval) == 0)
 			forceFull = true;
-		if (m_keyframeIntervalUs > 0)
+		const uint64_t keyframeIntervalUs = m_keyframeIntervalUs.load(std::memory_order_relaxed);
+		if (keyframeIntervalUs > 0)
 		{
 			const uint64_t lastKeyUs = m_lastKeyframeUs;
-			if (lastKeyUs == 0 || (copyStartUs - lastKeyUs) >= m_keyframeIntervalUs)
+			if (lastKeyUs == 0 || (copyStartUs - lastKeyUs) >= keyframeIntervalUs)
 				forceFull = true;
 		}
 		if (overflow)
@@ -454,7 +587,9 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 		}
 
 		++m_framesSinceFlush;
-		const bool shouldFlush = !signaledFence || recreated || forceFull || (m_framesSinceFlush >= m_flushIntervalFrames);
+		const uint32_t flushIntervalFrames = m_flushIntervalFrames.load(std::memory_order_relaxed);
+		const bool shouldFlush = !signaledFence || recreated || forceFull ||
+			(flushIntervalFrames > 0 && m_framesSinceFlush >= flushIntervalFrames);
 		if (shouldFlush)
 		{
 			context->Flush();
@@ -470,6 +605,8 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 		header->height = cefDesc.Height;
 		header->write_slot = m_writeSlot;
 		header->flags = frameFlags;
+		header->popup_visible = (m_usePopupDedicatedPlane && m_popupVisible) ? 1 : 0;
+		header->popup_rect = { m_popupRect.x, m_popupRect.y, m_popupRect.width, m_popupRect.height };
 		header->present_id = m_nextFrameId;
 		header->gpu_fence_value = gpuFenceValue;
 		header->frame_id = m_nextFrameId++;
@@ -529,8 +666,9 @@ void OsrHandler::TrySendBeginFrame()
 	const uint64_t sent = m_beginFramesSent.load(std::memory_order_relaxed);
 	const uint64_t done = m_paintsCompleted.load(std::memory_order_relaxed);
 	const uint64_t inFlight = (sent > done) ? (sent - done) : 0;
-	if (m_maxInFlightBeginFrames > 0 &&
-		inFlight >= static_cast<uint64_t>(m_maxInFlightBeginFrames))
+	const uint32_t maxInFlight = m_maxInFlightBeginFrames.load(std::memory_order_relaxed);
+	if (maxInFlight > 0 &&
+		inFlight >= static_cast<uint64_t>(maxInFlight))
 		return;
 
 	const uint64_t intervalNs = m_beginFrameIntervalNs.load(std::memory_order_relaxed);
@@ -805,6 +943,8 @@ void OsrHandler::PumpInput()
 			CefMouseEvent e; e.x = evt.mouse.x; e.y = evt.mouse.y;
 			e.modifiers = m_mouseModifiers;
 			host->SendMouseMoveEvent(e, false);
+			if (m_popupVisible.load(std::memory_order_relaxed))
+				shouldNudgeFrame = true;
 			break;
 		}
 		case InputEventType::MouseDown:
@@ -908,6 +1048,15 @@ void OsrHandler::PumpControl()
 		case ControlEventType::SetConsumerCadenceUs:
 			if (m_enableCadenceFeedback)
 				UpdateBeginFrameIntervalFromConsumerCadenceUs(evt.cadence_us.value);
+			break;
+		case ControlEventType::SetMaxInFlightBeginFrames:
+			m_maxInFlightBeginFrames.store(evt.frame_rate.value, std::memory_order_relaxed);
+			break;
+		case ControlEventType::SetFlushIntervalFrames:
+			m_flushIntervalFrames.store(evt.frame_rate.value, std::memory_order_relaxed);
+			break;
+		case ControlEventType::SetKeyframeIntervalUs:
+			m_keyframeIntervalUs.store(evt.cadence_us.value, std::memory_order_relaxed);
 			break;
 		case ControlEventType::ScrollTo:
 			browser->GetMainFrame()->ExecuteJavaScript(

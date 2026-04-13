@@ -109,11 +109,11 @@ private:
 	uint64_t              m_nextFrameId{ 1 };
 	uint64_t              m_nextGpuFenceValue{ 1 };
 	uint32_t              m_keyframeInterval{ 120 };
-	uint64_t              m_keyframeIntervalUs{ 300000ULL };
+	std::atomic<uint64_t> m_keyframeIntervalUs{ 300000ULL };
 	uint64_t              m_lastKeyframeUs{ 0 };
-	uint32_t              m_maxInFlightBeginFrames{ 0 };
+	std::atomic<uint32_t> m_maxInFlightBeginFrames{ 0 };
 	uint32_t              m_warmupFullFrames{ 3 };
-	uint32_t              m_flushIntervalFrames{ 4 };
+	std::atomic<uint32_t> m_flushIntervalFrames{ 4 };
 
 	CefRect              m_popupRect;
 	CefRect              m_popupClearRect;   // area to refresh from cefTexture after popup hides
@@ -129,6 +129,9 @@ private:
 	static constexpr uint32_t BUFFER_COUNT = SHM_FRAME_SLOT_COUNT;
 	std::array<ComPtr<ID3D11Texture2D>, BUFFER_COUNT> m_sharedTexture;
 	std::array<HANDLE, BUFFER_COUNT>                  m_sharedNTHandle{};
+	ComPtr<ID3D11Texture2D> m_sharedPopupTexture;
+	HANDLE                  m_sharedPopupHandle = nullptr;
+	bool                    m_usePopupDedicatedPlane = true;
 	uint32_t                m_writeSlot = 0;
 	uint32_t                m_sharedWidth = 0;
 	uint32_t                m_sharedHeight = 0;
