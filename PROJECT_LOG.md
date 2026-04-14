@@ -314,3 +314,29 @@ YYYY-MM-DD HH:MM
 ### Impact
 - Popup overlay updates now arrive immediately on popup paint events.
 - Dropdown hover feedback is visibly smoother with lower perceived lag.
+
+---
+
+## 2026-04-14 11:40
+
+### Changed
+- Added host->UE JS console log transport over shared memory:
+  - `SharedMemoryLayout.h`:
+    - new SHM constants `SHM_CONSOLE_NAME`, `EVT_CONSOLE_READY`
+    - new ring sizing constants (`CONSOLE_RING_CAPACITY`, `CONSOLE_MESSAGE_MAX`, `CONSOLE_SOURCE_MAX`)
+    - new `ConsoleLogLevel`, `ConsoleLogEvent`, `ConsoleRingBuffer`
+  - added `include/shm/SharedConsoleBuffer.h` (producer ring wrapper).
+- Wired console publishing in host render handler:
+  - `OsrHandler` now owns `SharedConsoleBuffer`.
+  - `Init()` now initializes console buffer and `Shutdown()` closes it.
+  - Implemented `OnConsoleMessage(...)` to map CEF severity to protocol level and publish message/source/line to SHM.
+- Updated host CMake lists to include `SharedConsoleBuffer.h`.
+- Host build validated after change.
+
+### Why
+- UE needed full JS console visibility (log/warning/error) from CEF process with a reliable IPC path.
+- Existing frame/input/control channels had no console-log transport.
+
+### Impact
+- JS console messages are now exported by host in real time for UE-side logging/event dispatch.
+- Protocol surface expanded with a dedicated console ring channel.

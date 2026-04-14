@@ -5,6 +5,7 @@
 #include "shm/SharedFrameBuffer.h"
 #include "shm/SharedInputBuffer.h"
 #include "shm/SharedControlBuffer.h"
+#include "shm/SharedConsoleBuffer.h"
 #include "D3D11Device.h"
 #include <d3d11_1.h>
 #include <dxgi1_2.h>
@@ -42,6 +43,8 @@ public:
 
 	void OnPopupShow(CefRefPtr<CefBrowser> browser, bool show) override;
 	void OnPopupSize(CefRefPtr<CefBrowser> browser, const CefRect& rect) override;
+	bool OnConsoleMessage(CefRefPtr<CefBrowser> browser, cef_log_severity_t level,
+		const CefString& message, const CefString& source, int line) override;
 
 	void GetViewRect(CefRefPtr<CefBrowser> browser, CefRect& rect) override;
 
@@ -77,6 +80,7 @@ private:
 	SharedFrameBuffer     m_frameBuffer;
 	SharedInputBuffer     m_inputBuffer;
 	SharedControlBuffer   m_controlBuffer;
+	SharedConsoleBuffer   m_consoleBuffer;
 	CefRefPtr<CefBrowser> m_browser;
 	std::thread           m_renderThread;
 	std::thread           m_inputThread;

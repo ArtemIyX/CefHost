@@ -11,6 +11,9 @@ constexpr uint32_t SHM_PROTOCOL_MAGIC = 0x43454648; // 'CEFH'
 
 constexpr uint32_t INPUT_RING_CAPACITY = 256;
 constexpr uint32_t CONTROL_RING_CAPACITY = 64;
+constexpr uint32_t CONSOLE_RING_CAPACITY = 256;
+constexpr uint32_t CONSOLE_MESSAGE_MAX = 1024;
+constexpr uint32_t CONSOLE_SOURCE_MAX = 256;
 
 constexpr const wchar_t* SHM_FRAME_NAME = L"CEFHost_Frame";
 constexpr const wchar_t* SHM_INPUT_NAME = L"CEFHost_Input";
@@ -18,6 +21,8 @@ constexpr const wchar_t* EVT_FRAME_READY = L"CEFHost_FrameReady";
 constexpr const wchar_t* EVT_INPUT_READY = L"CEFHost_InputReady";
 constexpr const wchar_t* SHM_CONTROL_NAME = L"CEFHost_Control";
 constexpr const wchar_t* EVT_CONTROL_READY = L"CEFHost_ControlReady";
+constexpr const wchar_t* SHM_CONSOLE_NAME = L"CEFHost_Console";
+constexpr const wchar_t* EVT_CONSOLE_READY = L"CEFHost_ConsoleReady";
 constexpr const wchar_t* EVT_SHUTDOWN = L"CEFHost_Shutdown";
 constexpr const wchar_t* SHM_GPU_FENCE_NAME = L"Global\\CEFHost_SharedFence";
 
@@ -143,4 +148,29 @@ struct ControlRingBuffer
 	uint32_t              capacity;
 	uint32_t              reserved;
 	ControlEvent          events[CONTROL_RING_CAPACITY];
+};
+
+enum class ConsoleLogLevel : uint8_t
+{
+	Log = 0,
+	Warning = 1,
+	Error = 2,
+};
+
+struct ConsoleLogEvent
+{
+	ConsoleLogLevel level;
+	uint8_t         reserved[3];
+	int32_t         line;
+	char16_t        source[CONSOLE_SOURCE_MAX];
+	char16_t        message[CONSOLE_MESSAGE_MAX];
+};
+
+struct ConsoleRingBuffer
+{
+	std::atomic<uint32_t> write_index;
+	std::atomic<uint32_t> read_index;
+	uint32_t              capacity;
+	uint32_t              reserved;
+	ConsoleLogEvent       events[CONSOLE_RING_CAPACITY];
 };

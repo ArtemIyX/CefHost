@@ -28,6 +28,7 @@ set(HOST_HEADERS
     include/shm/SharedFrameBuffer.h
     include/shm/SharedInputBuffer.h
     include/shm/SharedControlBuffer.h
+    include/shm/SharedConsoleBuffer.h
 )
 
 add_executable(Host ${HOST_SOURCES} ${HOST_HEADERS})

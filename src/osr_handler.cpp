@@ -63,6 +63,19 @@ void TryPinCurrentThread(uint32_t logicalIndex)
 	if (mask != 0)
 		SetThreadAffinityMask(GetCurrentThread(), mask);
 }
+
+template <size_t N>
+void CopyCefStringToUtf16Array(const CefString& in, char16_t(&out)[N])
+{
+	if constexpr (N == 0)
+		return;
+	for (size_t i = 0; i < N; ++i)
+		out[i] = 0;
+	const std::u16string value = in.ToString16();
+	const size_t copyCount = (value.size() < (N - 1)) ? value.size() : (N - 1);
+	for (size_t i = 0; i < copyCount; ++i)
+		out[i] = value[i];
+}
 }
 
 
@@ -79,6 +92,7 @@ bool OsrHandler::Init()
 	if (!m_frameBuffer.Init())   return false;
 	if (!m_inputBuffer.Init())   return false;
 	if (!m_controlBuffer.Init()) return false;
+	if (!m_consoleBuffer.Init()) return false;
 
 	HRESULT hr = g_D3D11Device.GetDevice()->QueryInterface(IID_PPV_ARGS(&m_device1));
 	if (FAILED(hr))
@@ -176,6 +190,7 @@ void OsrHandler::Shutdown()
 	m_frameBuffer.Shutdown();
 	m_inputBuffer.Shutdown();
 	m_controlBuffer.Shutdown();
+	m_consoleBuffer.Shutdown();
 }
 
 bool OsrHandler::EnsureSharedTextures(uint32_t width, uint32_t height, bool* outRecreated)
@@ -896,6 +911,24 @@ void OsrHandler::OnPopupShow(CefRefPtr<CefBrowser> browser, bool show)
 void OsrHandler::OnPopupSize(CefRefPtr<CefBrowser> browser, const CefRect& rect)
 {
 	m_popupRect = rect;
+}
+
+bool OsrHandler::OnConsoleMessage(CefRefPtr<CefBrowser> browser, cef_log_severity_t level,
+	const CefString& message, const CefString& source, int line)
+{
+	ConsoleLogEvent evt{};
+	if (level >= LOGSEVERITY_ERROR)
+		evt.level = ConsoleLogLevel::Error;
+	else if (level == LOGSEVERITY_WARNING)
+		evt.level = ConsoleLogLevel::Warning;
+	else
+		evt.level = ConsoleLogLevel::Log;
+
+	evt.line = line;
+	CopyCefStringToUtf16Array(source, evt.source);
+	CopyCefStringToUtf16Array(message, evt.message);
+	m_consoleBuffer.WriteEvent(evt);
+	return false;
 }
 
 void OsrHandler::GetViewRect(CefRefPtr<CefBrowser> browser, CefRect& rect)
