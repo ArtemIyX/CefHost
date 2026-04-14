@@ -78,6 +78,56 @@ void CopyCefStringToUtf16Array(const CefString& in, char16_t(&out)[N])
 		out[i] = value[i];
 }
 
+bool IsAsciiAlpha(char16_t c)
+{
+	return (c >= u'a' && c <= u'z') || (c >= u'A' && c <= u'Z');
+}
+
+std::u16string HexEscapeByte(uint8_t b)
+{
+	static constexpr char16_t kHex[] = u"0123456789ABCDEF";
+	std::u16string out;
+	out.push_back(u'%');
+	out.push_back(kHex[(b >> 4) & 0xF]);
+	out.push_back(kHex[b & 0xF]);
+	return out;
+}
+
+std::u16string EncodeFileUrlPath(const std::u16string& path)
+{
+	// Keep path separators/drive colon intact. Escape only problematic ASCII bytes.
+	std::u16string out;
+	out.reserve(path.size() + 16);
+	for (const char16_t c : path)
+	{
+		if (c == u' ')
+		{
+			out += u"%20";
+		}
+		else if (c == u'#')
+		{
+			out += u"%23";
+		}
+		else if (c == u'?')
+		{
+			out += u"%3F";
+		}
+		else if (c == u'%')
+		{
+			out += u"%25";
+		}
+		else if (c < 0x20)
+		{
+			out += HexEscapeByte(static_cast<uint8_t>(c));
+		}
+		else
+		{
+			out.push_back(c);
+		}
+	}
+	return out;
+}
+
 CefString MakeFileUrlFromPath(const CefString& rawPath)
 {
 	std::u16string path = rawPath.ToString16();
@@ -92,14 +142,58 @@ CefString MakeFileUrlFromPath(const CefString& rawPath)
 		return CefString(path);
 	}
 
-	// Windows drive path: C:/...
-	if (path.size() >= 2 && path[1] == u':')
+	// UNC path: //server/share/file.html
+	if (path.size() >= 2 && path[0] == u'/' && path[1] == u'/')
 	{
-		path = u"/" + path;
+		return CefString(u"file:" + EncodeFileUrlPath(path));
 	}
 
-	const CefString encoded = CefURIEncode(CefString(path), false);
-	return CefString(std::u16string(u"file://") + encoded.ToString16());
+	// Windows drive path: C:/...
+	if (path.size() >= 3 && IsAsciiAlpha(path[0]) && path[1] == u':' && path[2] == u'/')
+	{
+		return CefString(u"file:///" + EncodeFileUrlPath(path));
+	}
+
+	// Absolute path without drive (rare on Windows).
+	if (!path.empty() && path[0] == u'/')
+	{
+		return CefString(u"file://" + EncodeFileUrlPath(path));
+	}
+
+	// Fallback: treat as local relative path.
+	return CefString(u"file:///" + EncodeFileUrlPath(path));
+}
+
+const char* ControlEventTypeToString(ControlEventType type)
+{
+	switch (type)
+	{
+	case ControlEventType::GoBack: return "GoBack";
+	case ControlEventType::GoForward: return "GoForward";
+	case ControlEventType::StopLoad: return "StopLoad";
+	case ControlEventType::Reload: return "Reload";
+	case ControlEventType::SetURL: return "SetURL";
+	case ControlEventType::SetPaused: return "SetPaused";
+	case ControlEventType::SetHidden: return "SetHidden";
+	case ControlEventType::SetFocus: return "SetFocus";
+	case ControlEventType::SetZoomLevel: return "SetZoomLevel";
+	case ControlEventType::SetFrameRate: return "SetFrameRate";
+	case ControlEventType::ScrollTo: return "ScrollTo";
+	case ControlEventType::Resize: return "Resize";
+	case ControlEventType::SetMuted: return "SetMuted";
+	case ControlEventType::OpenDevTools: return "OpenDevTools";
+	case ControlEventType::CloseDevTools: return "CloseDevTools";
+	case ControlEventType::SetInputEnabled: return "SetInputEnabled";
+	case ControlEventType::ExecuteJS: return "ExecuteJS";
+	case ControlEventType::ClearCookies: return "ClearCookies";
+	case ControlEventType::SetConsumerCadenceUs: return "SetConsumerCadenceUs";
+	case ControlEventType::SetMaxInFlightBeginFrames: return "SetMaxInFlightBeginFrames";
+	case ControlEventType::SetFlushIntervalFrames: return "SetFlushIntervalFrames";
+	case ControlEventType::SetKeyframeIntervalUs: return "SetKeyframeIntervalUs";
+	case ControlEventType::OpenLocalFile: return "OpenLocalFile";
+	case ControlEventType::LoadHtmlString: return "LoadHtmlString";
+	default: return "Unknown";
+	}
 }
 }
 
@@ -1086,6 +1180,9 @@ void OsrHandler::PumpControl()
 	ControlEvent evt;
 	while (m_controlBuffer.ReadEvent(evt))
 	{
+		fprintf(stdout, "[Control] event=%s(%u)\n",
+			ControlEventTypeToString(evt.type),
+			static_cast<unsigned>(evt.type));
 		switch (evt.type)
 		{
 		case ControlEventType::GoBack:      browser->GoBack();    break;
@@ -1093,47 +1190,59 @@ void OsrHandler::PumpControl()
 		case ControlEventType::StopLoad:    browser->StopLoad();  break;
 		case ControlEventType::Reload:      browser->Reload();    break;
 		case ControlEventType::SetURL:
+			fprintf(stdout, "[Control] SetURL=%ls\n", reinterpret_cast<const wchar_t*>(evt.string.text));
 			browser->GetMainFrame()->LoadURL(CefString(evt.string.text)); break;
 		case ControlEventType::SetPaused:    m_paused = evt.flag.value; break;
 		case ControlEventType::SetHidden:    host->WasHidden(evt.flag.value); break;
 		case ControlEventType::SetFocus:     host->SetFocus(evt.flag.value); break;
 		case ControlEventType::SetZoomLevel:
+			fprintf(stdout, "[Control] Zoom=%.3f\n", evt.zoom.value);
 			host->SetZoomLevel(static_cast<double>(evt.zoom.value)); break;
 		case ControlEventType::SetFrameRate:
+			fprintf(stdout, "[Control] FrameRate=%u\n", evt.frame_rate.value);
 			host->SetWindowlessFrameRate(static_cast<int>(evt.frame_rate.value));
 			UpdateBeginFrameIntervalFromFps(evt.frame_rate.value);
 			break;
 		case ControlEventType::SetConsumerCadenceUs:
+			fprintf(stdout, "[Control] ConsumerCadenceUs=%u\n", evt.cadence_us.value);
 			if (m_enableCadenceFeedback)
 				UpdateBeginFrameIntervalFromConsumerCadenceUs(evt.cadence_us.value);
 			break;
 		case ControlEventType::SetMaxInFlightBeginFrames:
+			fprintf(stdout, "[Control] MaxInFlightBeginFrames=%u\n", evt.frame_rate.value);
 			m_maxInFlightBeginFrames.store(evt.frame_rate.value, std::memory_order_relaxed);
 			break;
 		case ControlEventType::SetFlushIntervalFrames:
+			fprintf(stdout, "[Control] FlushIntervalFrames=%u\n", evt.frame_rate.value);
 			m_flushIntervalFrames.store(evt.frame_rate.value, std::memory_order_relaxed);
 			break;
 		case ControlEventType::SetKeyframeIntervalUs:
+			fprintf(stdout, "[Control] KeyframeIntervalUs=%u\n", evt.cadence_us.value);
 			m_keyframeIntervalUs.store(evt.cadence_us.value, std::memory_order_relaxed);
 			break;
 		case ControlEventType::OpenLocalFile:
+			fprintf(stdout, "[Control] OpenLocalFile=%ls\n", reinterpret_cast<const wchar_t*>(evt.string.text));
 			browser->GetMainFrame()->LoadURL(MakeFileUrlFromPath(CefString(evt.string.text)));
 			break;
 		case ControlEventType::LoadHtmlString:
 		{
+			fprintf(stdout, "[Control] LoadHtmlString chars=%zu\n", std::char_traits<char16_t>::length(evt.string.text));
 			const CefString encoded = CefURIEncode(CefString(evt.string.text), false);
 			const std::u16string dataUrl = std::u16string(u"data:text/html;charset=utf-8,") + encoded.ToString16();
 			browser->GetMainFrame()->LoadURL(CefString(dataUrl));
 		}
 			break;
 		case ControlEventType::ScrollTo:
+			fprintf(stdout, "[Control] ScrollTo x=%d y=%d\n", evt.scroll.x, evt.scroll.y);
 			browser->GetMainFrame()->ExecuteJavaScript(
 				CefString("window.scrollTo(" + std::to_string(evt.scroll.x) + "," +
 					std::to_string(evt.scroll.y) + ")"), CefString(), 0);
 			break;
 		case ControlEventType::Resize:
+			fprintf(stdout, "[Control] Resize %ux%u\n", evt.resize.width, evt.resize.height);
 			Resize(evt.resize.width, evt.resize.height); break;
 		case ControlEventType::SetMuted:
+			fprintf(stdout, "[Control] SetMuted=%u\n", evt.flag.value ? 1u : 0u);
 			host->SetAudioMuted(evt.flag.value); break;
 		case ControlEventType::OpenDevTools:
 		{
