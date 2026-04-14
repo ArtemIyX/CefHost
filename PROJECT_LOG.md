@@ -340,3 +340,23 @@ YYYY-MM-DD HH:MM
 ### Impact
 - JS console messages are now exported by host in real time for UE-side logging/event dispatch.
 - Protocol surface expanded with a dedicated console ring channel.
+
+---
+
+## 2026-04-14 12:05
+
+### Changed
+- Extended control protocol with two new events in `ControlEventType`:
+  - `OpenLocalFile = 22`
+  - `LoadHtmlString = 23`
+- Host control handling (`OsrHandler::PumpControl`) now supports:
+  - `OpenLocalFile`: converts incoming path to `file://` URL (normalizes separators + URI encodes path) and loads it.
+  - `LoadHtmlString`: builds a `data:text/html;charset=utf-8,...` URL from in-memory HTML and loads it.
+- Added helper URL conversion logic in `src/osr_handler.cpp` and included CEF parser utilities.
+
+### Why
+- Add native control-channel support for loading local disk content and RAM-provided HTML payloads without requiring external HTTP serving.
+
+### Impact
+- UE/consumer can now request local-file navigation and direct in-memory HTML rendering through the existing control ring.
+- Host behavior remains backward-compatible for existing control events.

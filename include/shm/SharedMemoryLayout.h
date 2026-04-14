@@ -121,6 +121,7 @@ enum class ControlEventType : uint8_t
 	OpenDevTools = 13, CloseDevTools = 14, SetInputEnabled = 15,
 	ExecuteJS = 16, ClearCookies = 17, SetConsumerCadenceUs = 18,
 	SetMaxInFlightBeginFrames = 19, SetFlushIntervalFrames = 20, SetKeyframeIntervalUs = 21,
+	OpenLocalFile = 22, LoadHtmlString = 23,
 };
 
 constexpr uint32_t CONTROL_STRING_MAX = 2048;

@@ -5,6 +5,7 @@
 #include "include/cef_frame.h"
 #include "include/cef_load_handler.h"
 #include "include/cef_menu_model.h"
+#include "include/cef_parser.h"
 #include "include/cef_render_handler.h"
 #include "include/internal/cef_ptr.h"
 #include "include/internal/cef_string.h"
@@ -75,6 +76,30 @@ void CopyCefStringToUtf16Array(const CefString& in, char16_t(&out)[N])
 	const size_t copyCount = (value.size() < (N - 1)) ? value.size() : (N - 1);
 	for (size_t i = 0; i < copyCount; ++i)
 		out[i] = value[i];
+}
+
+CefString MakeFileUrlFromPath(const CefString& rawPath)
+{
+	std::u16string path = rawPath.ToString16();
+	for (auto& ch : path)
+	{
+		if (ch == u'\\') ch = u'/';
+	}
+
+	const std::u16string filePrefix = u"file://";
+	if (path.rfind(filePrefix, 0) == 0)
+	{
+		return CefString(path);
+	}
+
+	// Windows drive path: C:/...
+	if (path.size() >= 2 && path[1] == u':')
+	{
+		path = u"/" + path;
+	}
+
+	const CefString encoded = CefURIEncode(CefString(path), false);
+	return CefString(std::u16string(u"file://") + encoded.ToString16());
 }
 }
 
@@ -1090,6 +1115,16 @@ void OsrHandler::PumpControl()
 			break;
 		case ControlEventType::SetKeyframeIntervalUs:
 			m_keyframeIntervalUs.store(evt.cadence_us.value, std::memory_order_relaxed);
+			break;
+		case ControlEventType::OpenLocalFile:
+			browser->GetMainFrame()->LoadURL(MakeFileUrlFromPath(CefString(evt.string.text)));
+			break;
+		case ControlEventType::LoadHtmlString:
+		{
+			const CefString encoded = CefURIEncode(CefString(evt.string.text), false);
+			const std::u16string dataUrl = std::u16string(u"data:text/html;charset=utf-8,") + encoded.ToString16();
+			browser->GetMainFrame()->LoadURL(CefString(dataUrl));
+		}
 			break;
 		case ControlEventType::ScrollTo:
 			browser->GetMainFrame()->ExecuteJavaScript(
