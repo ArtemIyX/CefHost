@@ -24,12 +24,15 @@
 #include <dxgi1_2.h>
 #include <dxgiformat.h>
 #include <handleapi.h>
+#include <mmsystem.h>
 #include <mutex>
 #include <string>
 #include <synchapi.h>
 #include <thread>
 #include <Windows.h>
 #include <wrl/client.h>
+
+#pragma comment(lib, "winmm.lib")
 
 namespace
 {
@@ -454,6 +457,21 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 	const uint64_t copyStartUs = duration_cast<microseconds>(
 		steady_clock::now().time_since_epoch()).count();
 	m_lastPaintUs.store(copyStartUs, std::memory_order_relaxed);
+	const uint64_t lastBeginUs = m_lastBeginFrameUs.load(std::memory_order_relaxed);
+	if (lastBeginUs > 0 && copyStartUs >= lastBeginUs)
+	{
+		const uint64_t beginToPaintUs = copyStartUs - lastBeginUs;
+		// Ignore extreme outliers (pause/breakpoint/tab hidden) in moving telemetry.
+		if (beginToPaintUs <= 1000000ULL)
+		{
+			m_statBeginToPaintUsSum.fetch_add(beginToPaintUs, std::memory_order_relaxed);
+			uint64_t prevMax = m_statBeginToPaintUsMax.load(std::memory_order_relaxed);
+			while (beginToPaintUs > prevMax &&
+				!m_statBeginToPaintUsMax.compare_exchange_weak(prevMax, beginToPaintUs, std::memory_order_relaxed))
+			{
+			}
+		}
+	}
 
 	ID3D11DeviceContext* context = g_D3D11Device.GetContext();
 	if (!m_device1 || !context) return;
@@ -775,17 +793,28 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 			const uint64_t dirtyArea = m_statDirtyRectAreaSum.exchange(0, std::memory_order_relaxed);
 			const uint64_t copyUsSum = m_statCopySubmitUsSum.exchange(0, std::memory_order_relaxed);
 			const uint64_t copyUsMax = m_statCopySubmitUsMax.exchange(0, std::memory_order_relaxed);
+			const uint64_t beginSent = m_statBeginFramesSentWindow.exchange(0, std::memory_order_relaxed);
+			const uint64_t beginToPaintUsSum = m_statBeginToPaintUsSum.exchange(0, std::memory_order_relaxed);
+			const uint64_t beginToPaintUsMax = m_statBeginToPaintUsMax.exchange(0, std::memory_order_relaxed);
 			const uint64_t avgCopyUs = (produced > 0) ? (copyUsSum / produced) : 0;
+			const uint64_t avgBeginToPaintUs = (produced > 0) ? (beginToPaintUsSum / produced) : 0;
 			const uint64_t avgDirtyRects = (produced > 0) ? (dirtyCount / produced) : 0;
 			const uint64_t avgDirtyArea = (produced > 0) ? (dirtyArea / produced) : 0;
+			const uint64_t sentNow = m_beginFramesSent.load(std::memory_order_relaxed);
+			const uint64_t doneNow = m_paintsCompleted.load(std::memory_order_relaxed);
+			const uint64_t inFlightNow = (sentNow > doneNow) ? (sentNow - doneNow) : 0;
 			fprintf(stdout,
-				"[OsrTelemetry] frames=%llu forced_full=%llu dirty_rects_avg=%llu dirty_area_avg=%llu copy_us_avg=%llu copy_us_max=%llu\n",
+				"[OsrTelemetry] frames=%llu begin_sent=%llu in_flight=%llu forced_full=%llu dirty_rects_avg=%llu dirty_area_avg=%llu copy_us_avg=%llu copy_us_max=%llu begin_to_paint_us_avg=%llu begin_to_paint_us_max=%llu\n",
 				static_cast<unsigned long long>(produced),
+				static_cast<unsigned long long>(beginSent),
+				static_cast<unsigned long long>(inFlightNow),
 				static_cast<unsigned long long>(forced),
 				static_cast<unsigned long long>(avgDirtyRects),
 				static_cast<unsigned long long>(avgDirtyArea),
 				static_cast<unsigned long long>(avgCopyUs),
-				static_cast<unsigned long long>(copyUsMax));
+				static_cast<unsigned long long>(copyUsMax),
+				static_cast<unsigned long long>(avgBeginToPaintUs),
+				static_cast<unsigned long long>(beginToPaintUsMax));
 		}
 	}
 }
@@ -822,6 +851,7 @@ void OsrHandler::TrySendBeginFrame()
 	{
 		b->GetHost()->SendExternalBeginFrame();
 		m_beginFramesSent.fetch_add(1, std::memory_order_relaxed);
+		m_statBeginFramesSentWindow.fetch_add(1, std::memory_order_relaxed);
 	}
 }
 
@@ -883,6 +913,9 @@ void OsrHandler::UpdateBeginFrameIntervalFromConsumerCadenceUs(uint32_t cadenceU
 
 void OsrHandler::StartRenderLoop()
 {
+	if (!m_timerPeriodRaised && timeBeginPeriod(1) == TIMERR_NOERROR)
+		m_timerPeriodRaised = true;
+
 	m_running = true;
 
 	m_renderThread = std::thread([this]()
@@ -893,25 +926,72 @@ void OsrHandler::StartRenderLoop()
 				TryPinCurrentThread(0);
 			}
 
-			using clock = std::chrono::steady_clock;
-			auto next = clock::now();
+			LARGE_INTEGER qpf{};
+			QueryPerformanceFrequency(&qpf);
+			const LONGLONG freq = (qpf.QuadPart > 0) ? qpf.QuadPart : 1LL;
+			const LONGLONG spinTicks = (freq / 2000LL > 0) ? (freq / 2000LL) : 1LL; // ~0.5ms
+
+			auto nowTicks = []() -> LONGLONG
+			{
+				LARGE_INTEGER t{};
+				QueryPerformanceCounter(&t);
+				return t.QuadPart;
+			};
+
+			auto waitUntil = [&](LONGLONG targetTick)
+			{
+				while (m_running)
+				{
+					const LONGLONG now = nowTicks();
+					LONGLONG remaining = targetTick - now;
+					if (remaining <= 0)
+						break;
+
+					// Coarse sleep first, then short spin to reduce wake jitter.
+					if (remaining > spinTicks)
+					{
+						const LONGLONG sleepTicks = remaining - spinTicks;
+						DWORD sleepMs = static_cast<DWORD>((sleepTicks * 1000LL) / freq);
+						if (sleepMs == 0)
+							sleepMs = 1;
+						Sleep(sleepMs);
+					}
+					else
+					{
+						YieldProcessor();
+					}
+				}
+			};
+
+			LONGLONG nextTick = nowTicks();
 
 			while (m_running)
 			{
 				const uint64_t intervalNs = m_beginFrameIntervalNs.load(std::memory_order_relaxed);
-				const auto kFrame = std::chrono::nanoseconds(static_cast<long long>(intervalNs));
-				next += kFrame;
+				const uint64_t ns = (intervalNs > 0ULL) ? intervalNs : 16666666ULL;
+				LONGLONG frameTicks = static_cast<LONGLONG>((ns * static_cast<uint64_t>(freq) + 999999999ULL) / 1000000000ULL);
+				if (frameTicks <= 0)
+					frameTicks = 1;
+
+				nextTick += frameTicks;
+				waitUntil(nextTick);
+				if (!m_running)
+					break;
+
 				if (!m_paused)
 				{
 					TrySendBeginFrame();
 					TryIdleRepairInvalidate();
 				}
-				std::this_thread::sleep_until(next);
 
-				// If scheduler drifts badly (pause/stall), resync to avoid burst catch-up.
-				const auto now = clock::now();
-				if (now > next + kFrame)
-					next = now;
+				// Skip overdue ticks after stalls; never burst-send backlog.
+				const LONGLONG afterTick = nowTicks();
+				if (afterTick > nextTick + frameTicks)
+				{
+					const LONGLONG late = afterTick - nextTick;
+					const LONGLONG skip = late / frameTicks;
+					nextTick += skip * frameTicks;
+				}
 			}
 		});
 
@@ -979,6 +1059,12 @@ void OsrHandler::StopRenderLoop()
 	if (m_renderThread.joinable())  m_renderThread.join();
 	if (m_inputThread.joinable())   m_inputThread.join();
 	if (m_controlThread.joinable()) m_controlThread.join();
+
+	if (m_timerPeriodRaised)
+	{
+		timeEndPeriod(1);
+		m_timerPeriodRaised = false;
+	}
 }
 
 void OsrHandler::OnLoadStart(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, TransitionType transition_type)
@@ -1069,7 +1155,10 @@ void OsrHandler::GetViewRect(CefRefPtr<CefBrowser> browser, CefRect& rect)
 void OsrHandler::OnAfterCreated(CefRefPtr<CefBrowser> browser)
 {
 	m_browser = browser;
-	browser->GetHost()->SetFocus(true);
+	CefRefPtr<CefBrowserHost> host = browser->GetHost();
+	host->SetFocus(true);
+	UpdateBeginFrameIntervalFromFps(60u);
+	host->SetWindowlessFrameRate(60);
 	StartRenderLoop();
 }
 
@@ -1191,9 +1280,6 @@ void OsrHandler::PumpControl()
 	ControlEvent evt;
 	while (m_controlBuffer.ReadEvent(evt))
 	{
-		fprintf(stdout, "[Control] event=%s(%u)\n",
-			ControlEventTypeToString(evt.type),
-			static_cast<unsigned>(evt.type));
 		switch (evt.type)
 		{
 		case ControlEventType::GoBack:      browser->GoBack();    break;
@@ -1201,19 +1287,16 @@ void OsrHandler::PumpControl()
 		case ControlEventType::StopLoad:    browser->StopLoad();  break;
 		case ControlEventType::Reload:      browser->Reload();    break;
 		case ControlEventType::SetURL:
-			fprintf(stdout, "[Control] SetURL=%ls\n", reinterpret_cast<const wchar_t*>(evt.string.text));
 			browser->GetMainFrame()->LoadURL(CefString(evt.string.text)); break;
 		case ControlEventType::SetPaused:    m_paused = evt.flag.value; break;
 		case ControlEventType::SetHidden:    host->WasHidden(evt.flag.value); break;
 		case ControlEventType::SetFocus:     host->SetFocus(evt.flag.value); break;
 		case ControlEventType::SetZoomLevel:
-			fprintf(stdout, "[Control] Zoom=%.3f\n", evt.zoom.value);
 			host->SetZoomLevel(static_cast<double>(evt.zoom.value)); break;
 		case ControlEventType::SetFrameRate:
 		{
 			const uint32_t requested = evt.frame_rate.value;
-			const uint32_t applied = (requested == 0) ? 60u : requested;
-			fprintf(stdout, "[Control] FrameRate=%u\n", applied);
+			const uint32_t applied = (requested == 0) ? 60u : (requested < 60u ? 60u : (requested > 240u ? 240u : requested));
 			host->SetWindowlessFrameRate(static_cast<int>(applied));
 			UpdateBeginFrameIntervalFromFps(applied);
 		}
@@ -1222,40 +1305,39 @@ void OsrHandler::PumpControl()
 			(void)evt;
 			break;
 		case ControlEventType::SetMaxInFlightBeginFrames:
-			fprintf(stdout, "[Control] MaxInFlightBeginFrames=%u\n", evt.frame_rate.value);
-			m_maxInFlightBeginFrames.store(evt.frame_rate.value, std::memory_order_relaxed);
+		{
+			const uint32_t requested = evt.frame_rate.value;
+			const uint32_t applied = (requested == 0u) ? 2u : requested;
+			m_maxInFlightBeginFrames.store(applied, std::memory_order_relaxed);
+			// Drop historical debt from previous unlimited mode so cap can stabilize immediately.
+			const uint64_t sentNow = m_beginFramesSent.load(std::memory_order_relaxed);
+			m_paintsCompleted.store(sentNow, std::memory_order_relaxed);
+		}
 			break;
 		case ControlEventType::SetFlushIntervalFrames:
-			fprintf(stdout, "[Control] FlushIntervalFrames=%u\n", evt.frame_rate.value);
 			m_flushIntervalFrames.store(evt.frame_rate.value, std::memory_order_relaxed);
 			break;
 		case ControlEventType::SetKeyframeIntervalUs:
-			fprintf(stdout, "[Control] KeyframeIntervalUs=%u\n", evt.cadence_us.value);
 			m_keyframeIntervalUs.store(evt.cadence_us.value, std::memory_order_relaxed);
 			break;
 		case ControlEventType::OpenLocalFile:
-			fprintf(stdout, "[Control] OpenLocalFile=%ls\n", reinterpret_cast<const wchar_t*>(evt.string.text));
 			browser->GetMainFrame()->LoadURL(MakeFileUrlFromPath(CefString(evt.string.text)));
 			break;
 		case ControlEventType::LoadHtmlString:
 		{
-			fprintf(stdout, "[Control] LoadHtmlString chars=%zu\n", std::char_traits<char16_t>::length(evt.string.text));
 			const CefString encoded = CefURIEncode(CefString(evt.string.text), false);
 			const std::u16string dataUrl = std::u16string(u"data:text/html;charset=utf-8,") + encoded.ToString16();
 			browser->GetMainFrame()->LoadURL(CefString(dataUrl));
 		}
 			break;
 		case ControlEventType::ScrollTo:
-			fprintf(stdout, "[Control] ScrollTo x=%d y=%d\n", evt.scroll.x, evt.scroll.y);
 			browser->GetMainFrame()->ExecuteJavaScript(
 				CefString("window.scrollTo(" + std::to_string(evt.scroll.x) + "," +
 					std::to_string(evt.scroll.y) + ")"), CefString(), 0);
 			break;
 		case ControlEventType::Resize:
-			fprintf(stdout, "[Control] Resize %ux%u\n", evt.resize.width, evt.resize.height);
 			Resize(evt.resize.width, evt.resize.height); break;
 		case ControlEventType::SetMuted:
-			fprintf(stdout, "[Control] SetMuted=%u\n", evt.flag.value ? 1u : 0u);
 			host->SetAudioMuted(evt.flag.value); break;
 		case ControlEventType::OpenDevTools:
 		{

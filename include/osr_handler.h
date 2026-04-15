@@ -103,6 +103,9 @@ private:
 	std::atomic<uint64_t> m_statDirtyRectAreaSum{ 0 };
 	std::atomic<uint64_t> m_statCopySubmitUsSum{ 0 };
 	std::atomic<uint64_t> m_statCopySubmitUsMax{ 0 };
+	std::atomic<uint64_t> m_statBeginFramesSentWindow{ 0 };
+	std::atomic<uint64_t> m_statBeginToPaintUsSum{ 0 };
+	std::atomic<uint64_t> m_statBeginToPaintUsMax{ 0 };
 	std::atomic<uint64_t> m_lastPublishUs{ 0 };
 	std::atomic<uint64_t> m_lastDirtyPublishUs{ 0 };
 	std::atomic<uint64_t> m_lastRepairInvalidateUs{ 0 };
@@ -112,12 +115,13 @@ private:
 	uint64_t              m_framesSinceFlush{ 0 };
 	uint64_t              m_nextFrameId{ 1 };
 	uint64_t              m_nextGpuFenceValue{ 1 };
-	uint32_t              m_keyframeInterval{ 120 };
+	uint32_t              m_keyframeInterval{ 0 };
 	std::atomic<uint64_t> m_keyframeIntervalUs{ 150000ULL };
 	uint64_t              m_lastKeyframeUs{ 0 };
-	std::atomic<uint32_t> m_maxInFlightBeginFrames{ 1 };
+	std::atomic<uint32_t> m_maxInFlightBeginFrames{ 2 };
 	uint32_t              m_warmupFullFrames{ 3 };
-	std::atomic<uint32_t> m_flushIntervalFrames{ 2 };
+	std::atomic<uint32_t> m_flushIntervalFrames{ 1 };
+	bool                  m_timerPeriodRaised{ false };
 
 	CefRect              m_popupRect;
 	CefRect              m_popupClearRect;   // area to refresh from cefTexture after popup hides
