@@ -381,3 +381,33 @@ YYYY-MM-DD HH:MM
 ### Impact
 - More stable producer pacing defaults for 60 FPS host/consumer pipelines.
 - UE can reliably observe `Loading/Ready/Error` transitions without waiting for a fresh render event.
+
+---
+
+## 2026-04-15 18:05
+
+### Changed
+- Stabilized host pacing and diagnostics for horizontal animation smoothness:
+  - removed noisy `[Control]` runtime logs.
+  - enforced bounded begin-frame backpressure and reset stale in-flight debt when cap changes.
+  - moved default `max in-flight begin frames` to `2` for smoother bounded pipelining.
+- Reworked host render scheduler:
+  - replaced simple sleep loop with QPC cadence loop.
+  - then upgraded wait path to high-resolution waitable timer + short spin tail.
+  - disabled render-thread affinity pinning (input/control pinning unchanged).
+  - softened catch-up policy to only hard-resync on major stalls.
+- Removed proactive keyframe full-frame forcing from steady-state paint path.
+- Extended host telemetry:
+  - added forced-full cause split (`forced_manual`, `forced_recreate`, `forced_overflow`).
+  - added producer cadence fields (`interval_us`, `producer_fps`).
+  - added scheduler lateness stats (`sched_miss`, `sched_late_us_avg`, `sched_late_us_max`).
+- Reverted temporary hard FPS lock:
+  - runtime `SetFrameRate` control works again (clamped to safe range), with telemetry kept.
+
+### Why
+- Eliminate forward/backward jitter and periodic hold/catch-up stutter without breaking rendering.
+- Separate transport issues from scheduler issues using explicit per-window diagnostics.
+
+### Impact
+- Queue/fence instability was removed (`in_flight` and `gaps` stabilized in tests).
+- Remaining smoothness work is now narrowed to compositor/paint cadence spikes, with telemetry to target them directly.

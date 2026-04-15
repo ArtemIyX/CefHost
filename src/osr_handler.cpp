@@ -36,6 +36,10 @@
 
 namespace
 {
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
+
 ULONG_PTR SelectAffinityMask(ULONG_PTR processMask, uint32_t logicalIndex)
 {
 	if (processMask == 0) return 0;
@@ -678,9 +682,16 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 	if (header)
 	{
 		uint32_t frameFlags = FRAME_FLAG_NONE;
-		bool forceFull = m_forceFullFrame.exchange(false, std::memory_order_relaxed);
+		const bool forceFullManual = m_forceFullFrame.exchange(false, std::memory_order_relaxed);
+		bool forceFull = forceFullManual;
+		bool forceFullRecreate = false;
+		bool forceFullOverflow = false;
 		if (recreated)
+		{
 			frameFlags |= FRAME_FLAG_RESIZED;
+			forceFull = true;
+			forceFullRecreate = true;
+		}
 		if (m_usePopupDedicatedPlane)
 			frameFlags |= FRAME_FLAG_POPUP_PLANE;
 		if (m_warmupFullFrames > 0)
@@ -688,18 +699,10 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 			forceFull = true;
 			--m_warmupFullFrames;
 		}
-		if (m_keyframeInterval > 0 && (m_nextFrameId % m_keyframeInterval) == 0)
-			forceFull = true;
-		const uint64_t keyframeIntervalUs = m_keyframeIntervalUs.load(std::memory_order_relaxed);
-		if (keyframeIntervalUs > 0)
-		{
-			const uint64_t lastKeyUs = m_lastKeyframeUs;
-			if (lastKeyUs == 0 || (copyStartUs - lastKeyUs) >= keyframeIntervalUs)
-				forceFull = true;
-		}
 		if (overflow)
 		{
 			forceFull = true;
+			forceFullOverflow = true;
 			frameFlags |= FRAME_FLAG_OVERFLOW;
 		}
 
@@ -708,6 +711,12 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 			frameFlags |= FRAME_FLAG_FULL_FRAME;
 			header->dirty_count = 0;
 			m_statForcedFullFrames.fetch_add(1, std::memory_order_relaxed);
+			if (forceFullManual)
+				m_statForcedFullManual.fetch_add(1, std::memory_order_relaxed);
+			if (forceFullRecreate)
+				m_statForcedFullRecreate.fetch_add(1, std::memory_order_relaxed);
+			if (forceFullOverflow)
+				m_statForcedFullOverflow.fetch_add(1, std::memory_order_relaxed);
 			m_waitingIdleRepair.store(false, std::memory_order_relaxed);
 			m_lastKeyframeUs = copyStartUs;
 		}
@@ -789,6 +798,9 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 		{
 			const uint64_t produced = m_statProducedFrames.exchange(0, std::memory_order_relaxed);
 			const uint64_t forced = m_statForcedFullFrames.exchange(0, std::memory_order_relaxed);
+			const uint64_t forcedManual = m_statForcedFullManual.exchange(0, std::memory_order_relaxed);
+			const uint64_t forcedRecreate = m_statForcedFullRecreate.exchange(0, std::memory_order_relaxed);
+			const uint64_t forcedOverflow = m_statForcedFullOverflow.exchange(0, std::memory_order_relaxed);
 			const uint64_t dirtyCount = m_statDirtyRectCountSum.exchange(0, std::memory_order_relaxed);
 			const uint64_t dirtyArea = m_statDirtyRectAreaSum.exchange(0, std::memory_order_relaxed);
 			const uint64_t copyUsSum = m_statCopySubmitUsSum.exchange(0, std::memory_order_relaxed);
@@ -796,19 +808,34 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 			const uint64_t beginSent = m_statBeginFramesSentWindow.exchange(0, std::memory_order_relaxed);
 			const uint64_t beginToPaintUsSum = m_statBeginToPaintUsSum.exchange(0, std::memory_order_relaxed);
 			const uint64_t beginToPaintUsMax = m_statBeginToPaintUsMax.exchange(0, std::memory_order_relaxed);
+			const uint64_t schedMissCount = m_statSchedMissCount.exchange(0, std::memory_order_relaxed);
+			const uint64_t schedLateUsSum = m_statSchedLateUsSum.exchange(0, std::memory_order_relaxed);
+			const uint64_t schedLateUsMax = m_statSchedLateUsMax.exchange(0, std::memory_order_relaxed);
 			const uint64_t avgCopyUs = (produced > 0) ? (copyUsSum / produced) : 0;
 			const uint64_t avgBeginToPaintUs = (produced > 0) ? (beginToPaintUsSum / produced) : 0;
+			const uint64_t avgSchedLateUs = (schedMissCount > 0) ? (schedLateUsSum / schedMissCount) : 0;
 			const uint64_t avgDirtyRects = (produced > 0) ? (dirtyCount / produced) : 0;
 			const uint64_t avgDirtyArea = (produced > 0) ? (dirtyArea / produced) : 0;
 			const uint64_t sentNow = m_beginFramesSent.load(std::memory_order_relaxed);
 			const uint64_t doneNow = m_paintsCompleted.load(std::memory_order_relaxed);
 			const uint64_t inFlightNow = (sentNow > doneNow) ? (sentNow - doneNow) : 0;
+			const uint64_t intervalNsNow = m_beginFrameIntervalNs.load(std::memory_order_relaxed);
+			const uint64_t intervalUsNow = (intervalNsNow > 0ULL) ? (intervalNsNow / 1000ULL) : 0ULL;
+			const uint64_t producerFpsNow = (intervalNsNow > 0ULL) ? (1000000000ULL / intervalNsNow) : 0ULL;
 			fprintf(stdout,
-				"[OsrTelemetry] frames=%llu begin_sent=%llu in_flight=%llu forced_full=%llu dirty_rects_avg=%llu dirty_area_avg=%llu copy_us_avg=%llu copy_us_max=%llu begin_to_paint_us_avg=%llu begin_to_paint_us_max=%llu\n",
+				"[OsrTelemetry] frames=%llu begin_sent=%llu in_flight=%llu forced_full=%llu forced_manual=%llu forced_recreate=%llu forced_overflow=%llu interval_us=%llu producer_fps=%llu sched_miss=%llu sched_late_us_avg=%llu sched_late_us_max=%llu dirty_rects_avg=%llu dirty_area_avg=%llu copy_us_avg=%llu copy_us_max=%llu begin_to_paint_us_avg=%llu begin_to_paint_us_max=%llu\n",
 				static_cast<unsigned long long>(produced),
 				static_cast<unsigned long long>(beginSent),
 				static_cast<unsigned long long>(inFlightNow),
 				static_cast<unsigned long long>(forced),
+				static_cast<unsigned long long>(forcedManual),
+				static_cast<unsigned long long>(forcedRecreate),
+				static_cast<unsigned long long>(forcedOverflow),
+				static_cast<unsigned long long>(intervalUsNow),
+				static_cast<unsigned long long>(producerFpsNow),
+				static_cast<unsigned long long>(schedMissCount),
+				static_cast<unsigned long long>(avgSchedLateUs),
+				static_cast<unsigned long long>(schedLateUsMax),
 				static_cast<unsigned long long>(avgDirtyRects),
 				static_cast<unsigned long long>(avgDirtyArea),
 				static_cast<unsigned long long>(avgCopyUs),
@@ -923,7 +950,6 @@ void OsrHandler::StartRenderLoop()
 			if (m_enableThreadTuning)
 			{
 				SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
-				TryPinCurrentThread(0);
 			}
 
 			LARGE_INTEGER qpf{};
@@ -938,6 +964,13 @@ void OsrHandler::StartRenderLoop()
 				return t.QuadPart;
 			};
 
+			HANDLE hiResTimer = CreateWaitableTimerExW(
+				nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+			if (!hiResTimer)
+			{
+				hiResTimer = CreateWaitableTimerExW(nullptr, nullptr, 0, TIMER_ALL_ACCESS);
+			}
+
 			auto waitUntil = [&](LONGLONG targetTick)
 			{
 				while (m_running)
@@ -951,10 +984,32 @@ void OsrHandler::StartRenderLoop()
 					if (remaining > spinTicks)
 					{
 						const LONGLONG sleepTicks = remaining - spinTicks;
-						DWORD sleepMs = static_cast<DWORD>((sleepTicks * 1000LL) / freq);
-						if (sleepMs == 0)
-							sleepMs = 1;
-						Sleep(sleepMs);
+						if (hiResTimer)
+						{
+							LONGLONG due100ns = -((sleepTicks * 10000000LL) / freq);
+							if (due100ns == 0)
+								due100ns = -1;
+							LARGE_INTEGER due{};
+							due.QuadPart = due100ns;
+							if (SetWaitableTimerEx(hiResTimer, &due, 0, nullptr, nullptr, nullptr, 0))
+							{
+								WaitForSingleObject(hiResTimer, INFINITE);
+							}
+							else
+							{
+								DWORD sleepMs = static_cast<DWORD>((sleepTicks * 1000LL) / freq);
+								if (sleepMs == 0)
+									sleepMs = 1;
+								Sleep(sleepMs);
+							}
+						}
+						else
+						{
+							DWORD sleepMs = static_cast<DWORD>((sleepTicks * 1000LL) / freq);
+							if (sleepMs == 0)
+								sleepMs = 1;
+							Sleep(sleepMs);
+						}
 					}
 					else
 					{
@@ -978,21 +1033,38 @@ void OsrHandler::StartRenderLoop()
 				if (!m_running)
 					break;
 
+				const LONGLONG wakeTick = nowTicks();
+				if (wakeTick > nextTick)
+				{
+					const uint64_t lateUs = static_cast<uint64_t>(((wakeTick - nextTick) * 1000000LL) / freq);
+					if (lateUs > 500ULL)
+					{
+						m_statSchedMissCount.fetch_add(1, std::memory_order_relaxed);
+						m_statSchedLateUsSum.fetch_add(lateUs, std::memory_order_relaxed);
+						uint64_t prevMax = m_statSchedLateUsMax.load(std::memory_order_relaxed);
+						while (lateUs > prevMax &&
+							!m_statSchedLateUsMax.compare_exchange_weak(prevMax, lateUs, std::memory_order_relaxed))
+						{
+						}
+					}
+				}
+
 				if (!m_paused)
 				{
 					TrySendBeginFrame();
 					TryIdleRepairInvalidate();
 				}
 
-				// Skip overdue ticks after stalls; never burst-send backlog.
+				// Resync only on major stalls to avoid aggressive skip/drop behavior.
 				const LONGLONG afterTick = nowTicks();
-				if (afterTick > nextTick + frameTicks)
+				if (afterTick > nextTick + frameTicks * 4)
 				{
-					const LONGLONG late = afterTick - nextTick;
-					const LONGLONG skip = late / frameTicks;
-					nextTick += skip * frameTicks;
+					nextTick = afterTick;
 				}
 			}
+
+			if (hiResTimer)
+				CloseHandle(hiResTimer);
 		});
 
 	m_inputThread = std::thread([this]()
@@ -1296,7 +1368,7 @@ void OsrHandler::PumpControl()
 		case ControlEventType::SetFrameRate:
 		{
 			const uint32_t requested = evt.frame_rate.value;
-			const uint32_t applied = (requested == 0) ? 60u : (requested < 60u ? 60u : (requested > 240u ? 240u : requested));
+			const uint32_t applied = (requested == 0) ? 60u : (requested > 240u ? 240u : requested);
 			host->SetWindowlessFrameRate(static_cast<int>(applied));
 			UpdateBeginFrameIntervalFromFps(applied);
 		}

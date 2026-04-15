@@ -99,6 +99,9 @@ private:
 	std::atomic<uint64_t> m_lastPaintUs{ 0 };
 	std::atomic<uint64_t> m_statProducedFrames{ 0 };
 	std::atomic<uint64_t> m_statForcedFullFrames{ 0 };
+	std::atomic<uint64_t> m_statForcedFullManual{ 0 };
+	std::atomic<uint64_t> m_statForcedFullRecreate{ 0 };
+	std::atomic<uint64_t> m_statForcedFullOverflow{ 0 };
 	std::atomic<uint64_t> m_statDirtyRectCountSum{ 0 };
 	std::atomic<uint64_t> m_statDirtyRectAreaSum{ 0 };
 	std::atomic<uint64_t> m_statCopySubmitUsSum{ 0 };
@@ -106,6 +109,9 @@ private:
 	std::atomic<uint64_t> m_statBeginFramesSentWindow{ 0 };
 	std::atomic<uint64_t> m_statBeginToPaintUsSum{ 0 };
 	std::atomic<uint64_t> m_statBeginToPaintUsMax{ 0 };
+	std::atomic<uint64_t> m_statSchedMissCount{ 0 };
+	std::atomic<uint64_t> m_statSchedLateUsSum{ 0 };
+	std::atomic<uint64_t> m_statSchedLateUsMax{ 0 };
 	std::atomic<uint64_t> m_lastPublishUs{ 0 };
 	std::atomic<uint64_t> m_lastDirtyPublishUs{ 0 };
 	std::atomic<uint64_t> m_lastRepairInvalidateUs{ 0 };
@@ -116,7 +122,7 @@ private:
 	uint64_t              m_nextFrameId{ 1 };
 	uint64_t              m_nextGpuFenceValue{ 1 };
 	uint32_t              m_keyframeInterval{ 0 };
-	std::atomic<uint64_t> m_keyframeIntervalUs{ 150000ULL };
+	std::atomic<uint64_t> m_keyframeIntervalUs{ 0ULL };
 	uint64_t              m_lastKeyframeUs{ 0 };
 	std::atomic<uint32_t> m_maxInFlightBeginFrames{ 2 };
 	uint32_t              m_warmupFullFrames{ 3 };
