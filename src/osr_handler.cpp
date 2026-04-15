@@ -796,6 +796,7 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 		else if (copyEndUs - lastLogUs >= 2000000ULL &&
 			m_lastTelemetryLogUs.compare_exchange_weak(lastLogUs, copyEndUs, std::memory_order_relaxed))
 		{
+			const uint64_t windowUs = (copyEndUs > lastLogUs) ? (copyEndUs - lastLogUs) : 1ULL;
 			const uint64_t produced = m_statProducedFrames.exchange(0, std::memory_order_relaxed);
 			const uint64_t forced = m_statForcedFullFrames.exchange(0, std::memory_order_relaxed);
 			const uint64_t forcedManual = m_statForcedFullManual.exchange(0, std::memory_order_relaxed);
@@ -811,6 +812,9 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 			const uint64_t schedMissCount = m_statSchedMissCount.exchange(0, std::memory_order_relaxed);
 			const uint64_t schedLateUsSum = m_statSchedLateUsSum.exchange(0, std::memory_order_relaxed);
 			const uint64_t schedLateUsMax = m_statSchedLateUsMax.exchange(0, std::memory_order_relaxed);
+			const uint64_t sentFps = (beginSent * 1000000ULL) / windowUs;
+			const uint64_t paintFps = (produced * 1000000ULL) / windowUs;
+			const uint64_t windowMs = windowUs / 1000ULL;
 			const uint64_t avgCopyUs = (produced > 0) ? (copyUsSum / produced) : 0;
 			const uint64_t avgBeginToPaintUs = (produced > 0) ? (beginToPaintUsSum / produced) : 0;
 			const uint64_t avgSchedLateUs = (schedMissCount > 0) ? (schedLateUsSum / schedMissCount) : 0;
@@ -823,7 +827,10 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 			const uint64_t intervalUsNow = (intervalNsNow > 0ULL) ? (intervalNsNow / 1000ULL) : 0ULL;
 			const uint64_t producerFpsNow = (intervalNsNow > 0ULL) ? (1000000000ULL / intervalNsNow) : 0ULL;
 			fprintf(stdout,
-				"[OsrTelemetry] frames=%llu begin_sent=%llu in_flight=%llu forced_full=%llu forced_manual=%llu forced_recreate=%llu forced_overflow=%llu interval_us=%llu producer_fps=%llu sched_miss=%llu sched_late_us_avg=%llu sched_late_us_max=%llu dirty_rects_avg=%llu dirty_area_avg=%llu copy_us_avg=%llu copy_us_max=%llu begin_to_paint_us_avg=%llu begin_to_paint_us_max=%llu\n",
+				"[OsrTelemetry] window_ms=%llu sent_fps=%llu paint_fps=%llu frames=%llu begin_sent=%llu in_flight=%llu forced_full=%llu forced_manual=%llu forced_recreate=%llu forced_overflow=%llu interval_us=%llu producer_fps=%llu sched_miss=%llu sched_late_us_avg=%llu sched_late_us_max=%llu dirty_rects_avg=%llu dirty_area_avg=%llu copy_us_avg=%llu copy_us_max=%llu begin_to_paint_us_avg=%llu begin_to_paint_us_max=%llu\n",
+				static_cast<unsigned long long>(windowMs),
+				static_cast<unsigned long long>(sentFps),
+				static_cast<unsigned long long>(paintFps),
 				static_cast<unsigned long long>(produced),
 				static_cast<unsigned long long>(beginSent),
 				static_cast<unsigned long long>(inFlightNow),
@@ -861,21 +868,10 @@ void OsrHandler::TrySendBeginFrame()
 		inFlight >= static_cast<uint64_t>(maxInFlight))
 		return;
 
-	const uint64_t intervalNs = m_beginFrameIntervalNs.load(std::memory_order_relaxed);
-	const uint64_t intervalUs = (intervalNs / 1000ULL > 0ULL) ? (intervalNs / 1000ULL) : 1ULL;
-
-	uint64_t prev = m_lastBeginFrameUs.load(std::memory_order_relaxed);
-	while (true)
-	{
-		if (now - prev < intervalUs)
-			return;
-		if (m_lastBeginFrameUs.compare_exchange_weak(prev, now, std::memory_order_relaxed))
-			break;
-	}
-
 	CefRefPtr<CefBrowser> b = m_browser;
 	if (b)
 	{
+		m_lastBeginFrameUs.store(now, std::memory_order_relaxed);
 		b->GetHost()->SendExternalBeginFrame();
 		m_beginFramesSent.fetch_add(1, std::memory_order_relaxed);
 		m_statBeginFramesSentWindow.fetch_add(1, std::memory_order_relaxed);
@@ -884,31 +880,8 @@ void OsrHandler::TrySendBeginFrame()
 
 void OsrHandler::TryIdleRepairInvalidate()
 {
-	using namespace std::chrono;
-	const uint64_t nowUs = duration_cast<microseconds>(
-		steady_clock::now().time_since_epoch()).count();
-
-	if (!m_waitingIdleRepair.load(std::memory_order_relaxed))
-		return;
-
-	const uint64_t lastPublishUs = m_lastPublishUs.load(std::memory_order_relaxed);
-	if (lastPublishUs == 0 || (nowUs - lastPublishUs) < 150000ULL)
-		return;
-
-	const uint64_t lastRepairUs = m_lastRepairInvalidateUs.load(std::memory_order_relaxed);
-	if (lastRepairUs != 0 && (nowUs - lastRepairUs) < 150000ULL)
-		return;
-
-	uint64_t expected = lastRepairUs;
-	if (!m_lastRepairInvalidateUs.compare_exchange_strong(expected, nowUs, std::memory_order_relaxed))
-		return;
-
-	CefRefPtr<CefBrowser> b = m_browser;
-	if (b)
-	{
-		b->GetHost()->Invalidate(PET_VIEW);
-		fprintf(stdout, "[OsrHandler] Idle-repair invalidate requested\n");
-	}
+	// Disabled: idle repair invalidation can inject cadence disturbances during animation.
+	return;
 }
 
 void OsrHandler::UpdateBeginFrameIntervalFromFps(uint32_t fps)

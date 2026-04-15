@@ -1,5 +1,18 @@
 #include "cef_browser_app.h"
 #include "include/cef_browser.h"
+#include "include/cef_command_line.h"
+
+void CefHostBrowserApp::OnBeforeCommandLineProcessing(const CefString& process_type, CefRefPtr<CefCommandLine> command_line)
+{
+    (void)process_type;
+    if (!command_line)
+        return;
+
+    command_line->AppendSwitch("disable-background-timer-throttling");
+    command_line->AppendSwitch("disable-renderer-backgrounding");
+    command_line->AppendSwitch("disable-backgrounding-occluded-windows");
+    command_line->AppendSwitchWithValue("disable-features", "CalculateNativeWinOcclusion");
+}
 
 void CefHostBrowserApp::OnContextInitialized()
 {

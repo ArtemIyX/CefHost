@@ -411,3 +411,30 @@ YYYY-MM-DD HH:MM
 ### Impact
 - Queue/fence instability was removed (`in_flight` and `gaps` stabilized in tests).
 - Remaining smoothness work is now narrowed to compositor/paint cadence spikes, with telemetry to target them directly.
+
+---
+
+## 2026-04-15 20:10
+
+### Changed
+- Added Chromium anti-throttle startup switches in `CefHostBrowserApp::OnBeforeCommandLineProcessing`:
+  - `disable-background-timer-throttling`
+  - `disable-renderer-backgrounding`
+  - `disable-backgrounding-occluded-windows`
+  - `disable-features=CalculateNativeWinOcclusion`
+- Added and kept richer host telemetry in `OsrHandler`:
+  - timing window and real rates (`window_ms`, `sent_fps`, `paint_fps`)
+  - producer settings (`interval_us`, `producer_fps`)
+  - scheduler lateness (`sched_miss`, `sched_late_us_avg`, `sched_late_us_max`)
+  - forced-full cause split.
+- Disabled idle-repair invalidation path (`TryIdleRepairInvalidate`) to remove cadence disturbance during motion.
+- Removed duplicate interval gate in `TrySendBeginFrame` so render-loop cadence controls send rate directly.
+- Tested and reverted `--disable-gpu-vsync` (A/B showed regression with larger consumer gaps).
+
+### Why
+- Verify whether host scheduling/producer throttling still caused frame drops after queue/fence fixes.
+- Separate host pacing issues from UE consumer cadence limits with explicit per-window metrics.
+
+### Impact
+- Host producer now reaches near-target cadence in steady windows (`sent_fps/paint_fps ~59-60`).
+- Remaining visible stutter was traced to UE-side consumption cadence (editor viewport running near ~40 FPS), not host transport/backpressure.
