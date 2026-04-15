@@ -985,15 +985,22 @@ void OsrHandler::OnLoadStart(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> 
 {
 	if (!frame->IsMain()) return;
 	FrameHeader* header = m_frameBuffer.GetHeader();
-	if (header) header->load_state = CefLoadState::Loading;
+	if (!header) return;
+	header->load_state = CefLoadState::Loading;
+	std::atomic_thread_fence(std::memory_order_release);
+	InterlockedIncrement(reinterpret_cast<volatile LONG*>(&header->sequence));
+	SetEvent(m_frameBuffer.GetEvent());
 }
 
 void OsrHandler::OnLoadEnd(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, int http_status_code)
 {
 	if (!frame->IsMain()) return;
 	FrameHeader* header = m_frameBuffer.GetHeader();
-	if (header)
-		header->load_state = (http_status_code >= 400) ? CefLoadState::Error : CefLoadState::Ready;
+	if (!header) return;
+	header->load_state = (http_status_code >= 400) ? CefLoadState::Error : CefLoadState::Ready;
+	std::atomic_thread_fence(std::memory_order_release);
+	InterlockedIncrement(reinterpret_cast<volatile LONG*>(&header->sequence));
+	SetEvent(m_frameBuffer.GetEvent());
 }
 
 void OsrHandler::OnLoadError(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
@@ -1001,7 +1008,11 @@ void OsrHandler::OnLoadError(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> 
 {
 	if (!frame->IsMain()) return;
 	FrameHeader* header = m_frameBuffer.GetHeader();
-	if (header) header->load_state = CefLoadState::Error;
+	if (!header) return;
+	header->load_state = CefLoadState::Error;
+	std::atomic_thread_fence(std::memory_order_release);
+	InterlockedIncrement(reinterpret_cast<volatile LONG*>(&header->sequence));
+	SetEvent(m_frameBuffer.GetEvent());
 }
 
 bool OsrHandler::OnCursorChange(CefRefPtr<CefBrowser> browser, CefCursorHandle cursor,
@@ -1199,14 +1210,16 @@ void OsrHandler::PumpControl()
 			fprintf(stdout, "[Control] Zoom=%.3f\n", evt.zoom.value);
 			host->SetZoomLevel(static_cast<double>(evt.zoom.value)); break;
 		case ControlEventType::SetFrameRate:
-			fprintf(stdout, "[Control] FrameRate=%u\n", evt.frame_rate.value);
-			host->SetWindowlessFrameRate(static_cast<int>(evt.frame_rate.value));
-			UpdateBeginFrameIntervalFromFps(evt.frame_rate.value);
+		{
+			const uint32_t requested = evt.frame_rate.value;
+			const uint32_t applied = (requested == 0) ? 60u : requested;
+			fprintf(stdout, "[Control] FrameRate=%u\n", applied);
+			host->SetWindowlessFrameRate(static_cast<int>(applied));
+			UpdateBeginFrameIntervalFromFps(applied);
+		}
 			break;
 		case ControlEventType::SetConsumerCadenceUs:
-			fprintf(stdout, "[Control] ConsumerCadenceUs=%u\n", evt.cadence_us.value);
-			if (m_enableCadenceFeedback)
-				UpdateBeginFrameIntervalFromConsumerCadenceUs(evt.cadence_us.value);
+			(void)evt;
 			break;
 		case ControlEventType::SetMaxInFlightBeginFrames:
 			fprintf(stdout, "[Control] MaxInFlightBeginFrames=%u\n", evt.frame_rate.value);

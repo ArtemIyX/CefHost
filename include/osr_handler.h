@@ -113,11 +113,11 @@ private:
 	uint64_t              m_nextFrameId{ 1 };
 	uint64_t              m_nextGpuFenceValue{ 1 };
 	uint32_t              m_keyframeInterval{ 120 };
-	std::atomic<uint64_t> m_keyframeIntervalUs{ 300000ULL };
+	std::atomic<uint64_t> m_keyframeIntervalUs{ 150000ULL };
 	uint64_t              m_lastKeyframeUs{ 0 };
-	std::atomic<uint32_t> m_maxInFlightBeginFrames{ 0 };
+	std::atomic<uint32_t> m_maxInFlightBeginFrames{ 1 };
 	uint32_t              m_warmupFullFrames{ 3 };
-	std::atomic<uint32_t> m_flushIntervalFrames{ 4 };
+	std::atomic<uint32_t> m_flushIntervalFrames{ 2 };
 
 	CefRect              m_popupRect;
 	CefRect              m_popupClearRect;   // area to refresh from cefTexture after popup hides

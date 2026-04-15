@@ -360,3 +360,24 @@ YYYY-MM-DD HH:MM
 ### Impact
 - UE/consumer can now request local-file navigation and direct in-memory HTML rendering through the existing control ring.
 - Host behavior remains backward-compatible for existing control events.
+
+---
+
+## 2026-04-15 10:20
+
+### Changed
+- Tuned host pacing defaults for smoother 60 Hz consumer sync:
+  - `m_maxInFlightBeginFrames` default set to `1`.
+  - `m_flushIntervalFrames` default set to `2`.
+  - `m_keyframeIntervalUs` default set to `150000`.
+- Updated load-state propagation to UE:
+  - `OnLoadStart`, `OnLoadEnd`, and `OnLoadError` now update `FrameHeader::load_state`, increment `sequence`, and signal `CEFHost_FrameReady` immediately.
+  - This load-state signal is emitted even if no new paint frame is produced.
+
+### Why
+- Reduce cadence burst/skip behavior seen as horizontal animation jitter.
+- Prevent UE-side load-state listeners from stalling when page state changes without a paint-triggered frame event.
+
+### Impact
+- More stable producer pacing defaults for 60 FPS host/consumer pipelines.
+- UE can reliably observe `Loading/Ready/Error` transitions without waiting for a fresh render event.
