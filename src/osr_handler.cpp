@@ -1230,8 +1230,37 @@ void OsrHandler::PumpInput()
 	CefRefPtr<CefBrowserHost> host = browser->GetHost();
 	InputEvent evt;
 	bool shouldNudgeFrame = false;
-	while (m_inputBuffer.ReadEvent(evt))
+	uint32_t processedEvents = 0;
+	constexpr uint32_t kMaxEventsPerPump = 64;
+	constexpr uint32_t kNudgeEveryEvents = 8;
+	auto tryInputNudge = [this]()
 	{
+		if (m_paused.load(std::memory_order_relaxed))
+			return;
+
+		using namespace std::chrono;
+		const uint64_t now = duration_cast<microseconds>(
+			steady_clock::now().time_since_epoch()).count();
+		const uint64_t intervalNs = m_beginFrameIntervalNs.load(std::memory_order_relaxed);
+		const uint64_t cadenceUs = (intervalNs / 1000ULL > 0ULL) ? (intervalNs / 1000ULL) : 1ULL;
+		const uint64_t nudgeUs = (cadenceUs < 2000ULL) ? cadenceUs : 2000ULL;
+
+		uint64_t prev = m_lastBeginFrameUs.load(std::memory_order_relaxed);
+		while (true)
+		{
+			if (now - prev < nudgeUs)
+				break;
+			if (m_lastBeginFrameUs.compare_exchange_weak(prev, now, std::memory_order_relaxed))
+			{
+				CefRefPtr<CefBrowser> b = m_browser;
+				if (b) b->GetHost()->SendExternalBeginFrame();
+				break;
+			}
+		}
+	};
+	while (processedEvents < kMaxEventsPerPump && m_inputBuffer.ReadEvent(evt))
+	{
+		++processedEvents;
 		if (!m_inputEnabled) continue;
 		switch (evt.type)
 		{
@@ -1240,8 +1269,7 @@ void OsrHandler::PumpInput()
 			CefMouseEvent e; e.x = evt.mouse.x; e.y = evt.mouse.y;
 			e.modifiers = m_mouseModifiers;
 			host->SendMouseMoveEvent(e, false);
-			if (m_popupVisible.load(std::memory_order_relaxed))
-				shouldNudgeFrame = true;
+			shouldNudgeFrame = true;
 			break;
 		}
 		case InputEventType::MouseDown:
@@ -1290,29 +1318,17 @@ void OsrHandler::PumpInput()
 			break;
 		}
 		}
+
+		if (shouldNudgeFrame && (processedEvents % kNudgeEveryEvents) == 0)
+		{
+			tryInputNudge();
+			shouldNudgeFrame = false;
+		}
 	}
 
-	if (shouldNudgeFrame && !m_paused.load(std::memory_order_relaxed))
+	if (shouldNudgeFrame)
 	{
-		using namespace std::chrono;
-		const uint64_t now = duration_cast<microseconds>(
-			steady_clock::now().time_since_epoch()).count();
-		const uint64_t intervalNs = m_beginFrameIntervalNs.load(std::memory_order_relaxed);
-		const uint64_t cadenceUs = (intervalNs / 1000ULL > 0ULL) ? (intervalNs / 1000ULL) : 1ULL;
-		const uint64_t nudgeUs = (cadenceUs < 2000ULL) ? cadenceUs : 2000ULL;
-
-		uint64_t prev = m_lastBeginFrameUs.load(std::memory_order_relaxed);
-		while (true)
-		{
-			if (now - prev < nudgeUs)
-				break;
-			if (m_lastBeginFrameUs.compare_exchange_weak(prev, now, std::memory_order_relaxed))
-			{
-				CefRefPtr<CefBrowser> b = m_browser;
-				if (b) b->GetHost()->SendExternalBeginFrame();
-				break;
-			}
-		}
+		tryInputNudge();
 	}
 }
 

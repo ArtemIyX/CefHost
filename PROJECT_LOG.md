@@ -438,3 +438,20 @@ YYYY-MM-DD HH:MM
 ### Impact
 - Host producer now reaches near-target cadence in steady windows (`sent_fps/paint_fps ~59-60`).
 - Remaining visible stutter was traced to UE-side consumption cadence (editor viewport running near ~40 FPS), not host transport/backpressure.
+
+---
+
+## 2026-04-17 12:52
+
+### Changed
+- Improved input responsiveness path in `OsrHandler::PumpInput()`:
+  - mouse-move input now participates in input-triggered begin-frame nudging (not only popup-visible moves).
+  - bounded per-pump processing to `64` events to avoid long single-pass drain stalls.
+  - added periodic nudge during burst processing (`every 8 events`) plus final nudge.
+  - reused existing nudge rate gate (`m_lastBeginFrameUs`) to avoid aggressive over-requesting.
+
+### Why
+- User-observed lag pattern showed slider drag and high-rate typing could freeze visual updates until queue drain or mouse release.
+
+### Impact
+- Better interactive responsiveness under continuous input while keeping frame request throttling bounded.
