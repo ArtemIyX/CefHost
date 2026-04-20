@@ -544,3 +544,20 @@ YYYY-MM-DD HH:MM
 ### Impact
 - Formatting-only changes; no intended behavior changes.
 - Build remains green after formatting pass.
+
+---
+
+## 2026-04-20 13:48
+
+### Changed
+- Added missing Doxygen documentation in headers:
+  - include/osr_handler.h (private helper methods)
+  - include/shm/SharedMemoryLayout.h (protocol constants/enums/structs)
+- Kept comments concise and API-focused (@brief style blocks).
+
+### Why
+- Complete header-level API/protocol documentation for maintainability and onboarding.
+
+### Impact
+- Documentation-only change, no behavior change.
+- Build remains green after update.
