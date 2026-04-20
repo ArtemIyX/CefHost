@@ -510,3 +510,22 @@ YYYY-MM-DD HH:MM
 ### Impact
 - No intentional feature/protocol changes.
 - Build remains green after refactor.
+
+---
+
+## 2026-04-20 13:35
+
+### Changed
+- Refactored shared-texture recreation path in EnsureSharedTextures:
+  - extracted ResetSharedTextureRing, CreateSharedTextureRing
+  - extracted ResetSharedPopupPlane, CreateSharedPopupPlane
+  - extracted UpdateSharedResizeHeader
+- Kept EnsureSharedTextures as high-level orchestration.
+
+### Why
+- Split resource reset/create/header-publish responsibilities into small, reusable units.
+- Make texture lifecycle behavior easier to audit and maintain.
+
+### Impact
+- No intentional behavior change.
+- Build remains green after refactor.
