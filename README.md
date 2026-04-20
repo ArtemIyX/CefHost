@@ -194,3 +194,6 @@ xcopy /E /Y /I build\Release\* "C:\Users\Wellsaik\source\repos\CefUiExample\Plug
 
 Adjust that path before using on another machine.
 
+## License
+
+Project is licenced under [MIT](LICENSE)
