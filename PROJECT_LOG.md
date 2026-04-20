@@ -561,3 +561,25 @@ YYYY-MM-DD HH:MM
 ### Impact
 - Documentation-only change, no behavior change.
 - Build remains green after update.
+
+---
+
+## 2026-04-20 14:07
+
+### Changed
+- Added a detailed top-priority README.md for CEF_HOST.
+- Documented:
+  - project target (Unreal Web UI plugin integration)
+  - quick start and CMake build/run flow
+  - CEF usage and detected runtime version
+  - shared memory / shared texture / GPU accelerated paint architecture
+  - single-session limitation due fixed global IPC object names
+  - notable operational remarks and troubleshooting context
+
+### Why
+- Provide immediate onboarding and reduce integration mistakes.
+- Make critical limitations visible at the top of the documentation.
+
+### Impact
+- Documentation-only change.
+- No runtime behavior change.
