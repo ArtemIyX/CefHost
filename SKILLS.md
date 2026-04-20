@@ -1,152 +1,175 @@
-# SKILLS.md - Project Knowledge Base
+# SKILLS.md - CEF_HOST Knowledge Base
 
-**Project Name:** CEF OSR Host (DirectX 11 Accelerated Shared Texture + Shared Memory IPC)
+## 0. Critical Constraints (Read First)
 
-**Purpose:**  
-High-performance, low-latency off-screen rendering of Chromium (CEF) that exposes frames as D3D11 shared textures (named NT handles) and uses lock-free shared memory rings for input/control events. Designed to be embedded in another process (most commonly Unreal Engine 5) with zero-copy GPU texture sharing and minimal CPU overhead.
+- Single-session only.
+- Multi-instance/multi-session use is not supported yet because IPC object names are fixed global names (`CEFHost_*`, `Global\\CEFHost_*`) and collide.
+- This host is intended to be paired with an Unreal Web UI consumer plugin.
 
----
+## 1. Project Purpose
 
-## 1. Core Architecture Overview
+`CEF_HOST` is a Windows CEF off-screen rendering host that:
+- renders Chromium using GPU-accelerated paint,
+- publishes frame metadata through shared memory,
+- shares D3D11 textures via named NT handles,
+- consumes input/control from external clients through lock-free rings.
 
-- **D3D11Device** (singleton/global `g_D3D11Device`):  
-  Creates the D3D11 device + immediate context with `D3D11_CREATE_DEVICE_BGRA_SUPPORT` (and DEBUG layer in debug builds). Also acquires `IDXGIDevice` → `IDXGIAdapter` → `IDXGIFactory2`.
+Primary consumer: Unreal Engine plugin process.
 
-- **OsrHandler** (main class):  
-  Implements multiple CEF handlers:
-  - `CefRenderHandler` (accelerated paint, GetViewRect, OnPopupShow/Size, OnCursorChange)
-  - `CefLoadHandler` (OnLoadStart/End/Error)
-  - `CefContextMenuHandler` (disables context menu)
-  - `CefLifeSpanHandler` (OnAfterCreated / OnBeforeClose)
+## 2. Runtime Stack
 
-- **Shared Memory Triple-Buffer System:**
-  - **FrameBuffer** (`CEFHost_Frame`): Contains `FrameHeader` + 2× pixel buffers (double-buffered). GPU path only — CPU path is kept for layout compatibility but unused.
-  - **InputBuffer** (`CEFHost_Input`): Lock-free ring buffer (`InputRingBuffer`) for mouse/keyboard events.
-  - **ControlBuffer** (`CEFHost_Control`): Lock-free ring buffer (`ControlRingBuffer`) for browser control commands (URL, resize, JS, devtools, etc.).
+- CEF windowless rendering.
+- D3D11 device/context for texture copy and shared handles.
+- Shared memory ring buffers for frame/input/control/console IPC.
+- External begin-frame driven cadence loop.
 
-- **Communication Flow:**
-  - Host (this process) renders to D3D11 shared textures → signals `CEFHost_FrameReady` event.
-  - Client (UE5) opens named shared textures by name (`Global\CEFHost_SharedTex_0/1`) and reads header from shared memory.
-  - Client sends input/control events via the two ring buffers + `CEFHost_InputReady` / `CEFHost_ControlReady` events.
+CEF runtime currently used in this workspace:
+- `146.0.10+g8219561+chromium-146.0.7680.179` (from `build/Release/libcef.dll`).
 
----
+## 3. Main Components
 
-## 2. Key Classes & Responsibilities
+### `D3D11Device`
+- Global singleton-like owner: `g_D3D11Device`.
+- Initializes `ID3D11Device`, `ID3D11DeviceContext`, `IDXGIDevice`, `IDXGIFactory2`.
+- Must be initialized before `OsrHandler::Init()`.
 
-### D3D11Device.h
-- One-time initialization only.
-- Must be initialized before any OsrHandler.
-- Provides `GetDevice()`, `GetContext()`, `GetDXGIFactory()`.
+### `CefHostBrowserApp`
+- Browser process app and process handler.
+- Applies anti-throttle Chromium switches.
+- Creates one windowless OSR browser with:
+  - `shared_texture_enabled = true`
+  - `external_begin_frame_enabled = true`
 
-### OsrHandler (osr_handler.cpp)
-**Critical members:**
-- `m_device1` (ID3D11Device1) – used for `OpenSharedResource1`
-- `m_sharedTexture[2]` + named NT handles (`Global\CEFHost_SharedTex_0/1`)
-- `m_popupTexture` (separate texture for popup compositing)
-- `m_writeSlot` (0 or 1) – double buffering for frames
-- `m_popupVisible`, `m_popupRect`, `m_popupTexWidth/Height`
-- Three threads started in `OnAfterCreated`:
-  - `m_renderThread` – calls `Invalidate(PET_VIEW)` at ~60 FPS (16 ms sleep)
-  - `m_inputThread` – high-priority spin + `WaitForSingleObject` hybrid
-  - `m_controlThread` – normal priority, waits on control event
+### `OsrHandler`
+- Core integration class.
+- Implements:
+  - `CefRenderHandler`
+  - `CefLifeSpanHandler`
+  - `CefContextMenuHandler`
+  - `CefDisplayHandler`
+  - `CefLoadHandler`
+- Owns:
+  - shared channels (`SharedFrameBuffer`, `SharedInputBuffer`, `SharedControlBuffer`, `SharedConsoleBuffer`)
+  - texture ring and popup plane resources
+  - render/input/control worker threads
+  - cadence/backpressure/telemetry state
 
-**Important methods:**
-- `EnsureSharedTextures()` – creates/recreates double-buffered shared textures with `D3D11_RESOURCE_MISC_SHARED_NTHANDLE`
-- `OnAcceleratedPaint()` – **the hottest path**:
-  - Opens CEF’s shared texture
-  - Copies view to back buffer
-  - Composites popup on top (if visible) using `CopySubresourceRegion`
-  - Flips `m_writeSlot`
-  - Updates `FrameHeader` and signals event
-- `PumpInput()` / `PumpControl()` – read from ring buffers and forward to CEF
+## 4. IPC Contract (`SharedMemoryLayout.h`)
 
-### SharedMemoryLayout.h
-Contains **all** IPC data structures (must stay 100% binary compatible with client):
+This file is the binary protocol contract. Host and consumer must stay in sync.
 
-- `FrameHeader` (32 bytes): width, height, sequence, write_slot, cursor_type, load_state
-- `InputEvent` + `InputRingBuffer` (256 slots)
-- `ControlEvent` + `ControlRingBuffer` (64 slots) — supports strings up to 2048 UTF-16 characters
-- All event enums and union layouts
+Channels and names:
+- Frame mapping: `CEFHost_Frame`, event `CEFHost_FrameReady`
+- Input mapping: `CEFHost_Input`, event `CEFHost_InputReady`
+- Control mapping: `CEFHost_Control`, event `CEFHost_ControlReady`
+- Console mapping: `CEFHost_Console`, event `CEFHost_ConsoleReady`
+- Shutdown event: `CEFHost_Shutdown`
+- Shared fence: `Global\\CEFHost_SharedFence`
 
-### *Buffer.h files (FrameBuffer, InputBuffer, ControlBuffer)
-- `FrameBuffer::WriteFrame` is **NOT** used in GPU path (kept for compatibility).
-- All use placement-new for atomics inside shared memory.
-- Use `std::memory_order_acquire/release` correctly.
-- Events are manual-reset false (auto-reset).
+Shared textures:
+- Ring slots: `Global\\CEFHost_SharedTex_0..N-1` (`N = SHM_FRAME_SLOT_COUNT`, currently `3`)
+- Popup plane: `Global\\CEFHost_SharedPopupTex`
 
----
+Important frame metadata:
+- `protocol_magic`, `version`, `slot_count`
+- `width`, `height`, `write_slot`
+- `frame_id`, `present_id`, `sequence`
+- `gpu_fence_value`
+- `flags` (`FULL_FRAME`, `DIRTY_ONLY`, `OVERFLOW`, `RESIZED`, `POPUP_PLANE`)
+- `dirty_rects`, popup state/rect, cursor/load state
 
-## 3. Performance & Low-Latency Rules (Never Violate)
+## 5. Rendering Pipeline (Current)
 
-1. **Zero-copy GPU path is mandatory** — never fall back to CPU pixel copy unless debugging.
-2. Double-buffering of shared textures + `m_writeSlot` flip must be respected.
-3. Popup is composited **on the back buffer** before flip (so last frame always has popup baked in).
-4. `context->Flush()` after every paint.
-5. Input thread uses **0.5 ms spin + YieldProcessor** before falling back to `WaitForSingleObject`.
-6. All shared memory writes use correct release/acquire ordering.
-7. `FrameHeader::sequence` is incremented on every new frame (client must check it to detect updates).
-8. Named shared handles are created with prefix `Global\CEFHost_SharedTex_%u`.
+Hot path: `OsrHandler::OnAcceleratedPaint`.
 
----
+High-level flow:
+1. Open/reuse CEF shared texture handle.
+2. For `PET_VIEW`:
+   - ensure shared texture ring exists at current size,
+   - copy full CEF texture into next ring slot (race-safe strategy),
+   - collect dirty rect metadata and popup metadata,
+   - optionally copy popup texture to dedicated popup plane,
+   - signal shared fence when available, fallback to flush when needed,
+   - publish `FrameHeader` and signal frame event.
+3. For `PET_POPUP`:
+   - update cached popup texture,
+   - in popup-plane mode publish popup-only metadata/event too.
 
-## 4. Coding Style & Rules (Strict)
+Notes:
+- CPU pixel path exists for layout compatibility but GPU path is primary.
+- Frame publishes are release-fenced before sequence increment.
 
-- Use **modern C++** (C++20/23) but keep it simple and readable.
-- Error handling: `fprintf(stderr, "[Class] message: 0x%08X\n", hr);` — exact format required.
-- Success messages go to `stdout` with `[Class]` prefix.
-- No unnecessary includes.
-- Prefer `ComPtr<T>` everywhere.
-- Threads are joined cleanly in `Shutdown()` / `OnBeforeClose`.
-- Never block the CEF render thread.
-- All CEF callbacks that can be called from any thread are handled safely (locks only where needed: texture mutex, popup mutex).
-- `m_browser` is stored as `CefRefPtr<CefBrowser>` and nulled in `OnBeforeClose`.
-- Use `CefString` for all strings passed to CEF.
-- No `using namespace` except the one already in D3D11Device.h.
+## 6. Threads and Scheduling
 
----
+`OsrHandler` worker threads:
+- `RenderThreadMain()`:
+  - high-resolution timer + short spin tail,
+  - sends external begin frames with in-flight backpressure,
+  - keeps cadence from target FPS/cadence controls.
+- `InputThreadMain()`:
+  - low-latency spin-then-wait strategy,
+  - pumps input ring and nudges begin frame on interaction.
+- `ControlThreadMain()`:
+  - waits on control event and applies commands.
 
-## 5. Unreal Engine 5 Integration Notes
+Thread tuning can be disabled with `--no-thread-tuning`.
 
-- Client is expected to open the named handles `Global\CEFHost_SharedTex_0` and `_1`.
-- Client reads `FrameHeader` from `CEFHost_Frame` shared memory.
-- Client must respect double-buffering using `write_slot`.
-- All control commands (including `ExecuteJS`, `SetURL`, `Resize`, `SetZoomLevel`, etc.) are sent through `ControlBuffer`.
-- Input events are sent through `InputBuffer`.
-- DevTools can be opened via control event.
+## 7. Control/Input Features
 
----
+Control events include:
+- navigation: back/forward/stop/reload/url
+- state: paused/hidden/focus/muted/input-enabled
+- view: resize/scroll/zoom/fps
+- tools: open/close devtools
+- script/content: execute JS, load HTML string, open local file
+- transport tuning: max in-flight begin frames, flush interval, keyframe interval
 
-## 6. Common Tasks & Patterns
+Input events:
+- mouse move/down/up/wheel
+- key down/up/char
 
-**Adding a new control command:**
-1. Add enum value to `ControlEventType`
-2. Add field to the union in `ControlEvent`
-3. Handle it in `PumpControl()`
-4. Update client-side writer accordingly
+Console transport:
+- CEF console messages are pushed into console ring with level/source/line/message.
 
-**Changing frame format:**
-- Only `DXGI_FORMAT_B8G8R8A8_UNORM` is supported.
-- Update `SHM_FRAME_SIZE` and `SHM_MAX_WIDTH/HEIGHT` if needed.
+## 8. Build and Run
 
-**Debugging:**
-- Look for `[OsrHandler]` and `[D3D11Device]` messages in console.
-- In debug builds D3D11 debug layer is enabled.
-- `sequence` counter helps detect dropped frames.
+Build command used by project rule:
 
----
+```powershell
+cmake --build build --config Release
+```
 
-## 7. Files That Must Stay Synchronized
+Runtime args:
+- `--url`
+- `--size`, `--width`, `--height`
+- `--fps`
+- `--no-thread-tuning`
+- `--enable-cadence-feedback`
+- `--help`
 
-- `SharedMemoryLayout.h` (IPC contract)
-- `FrameBuffer.h` / `InputBuffer.h` / `ControlBuffer.h`
-- `osr_handler.cpp` (especially `OnAcceleratedPaint`, `EnsureSharedTextures`, `Pump*` functions)
-- `D3D11Device.h`
+## 9. Non-Negotiable Engineering Rules
 
-Any change to shared memory layout **must** be reflected in both host and client (UE5) code.
+- Do not break binary compatibility of `SharedMemoryLayout.h` without synchronized consumer update.
+- Do not introduce per-frame CPU readback fallback in normal path.
+- Keep `OnAcceleratedPaint` and publish ordering correctness-first.
+- Keep cross-thread state changes atomic/ordered.
+- Keep object names stable unless you also update the consumer.
 
----
+## 10. Typical Safe Change Workflow
 
-You are now fully briefed on this project.  
-When the user asks you to modify, extend, fix, or add features, you must respect **all** the above architecture, performance rules, error formatting, threading model, and shared-memory protocol exactly as implemented.
+1. Change host code.
+2. Rebuild `Release`.
+3. Verify frame protocol fields still correct.
+4. Verify Unreal consumer still reads slot/flags/fence correctly.
+5. Update `PROJECT_LOG.md`.
 
-Start every response with the minimal amount of text necessary and show code first.
+## 11. Files With Highest Coupling
+
+- `include/shm/SharedMemoryLayout.h`
+- `include/osr_handler.h`
+- `src/osr_handler.cpp`
+- `include/shm/SharedFrameBuffer.h`
+- `include/shm/SharedInputBuffer.h`
+- `include/shm/SharedControlBuffer.h`
+- `include/shm/SharedConsoleBuffer.h`
+
