@@ -322,21 +322,8 @@ void OsrHandler::InitFrameHeaderDefaults()
 void OsrHandler::ReleaseSharedTextureResources()
 {
 	std::lock_guard<std::mutex> lock(m_textureMutex);
-	for (uint32_t i = 0; i < BUFFER_COUNT; ++i)
-	{
-		if (m_sharedNTHandle[i])
-		{
-			CloseHandle(m_sharedNTHandle[i]);
-			m_sharedNTHandle[i] = nullptr;
-		}
-		m_sharedTexture[i].Reset();
-	}
-	if (m_sharedPopupHandle)
-	{
-		CloseHandle(m_sharedPopupHandle);
-		m_sharedPopupHandle = nullptr;
-	}
-	m_sharedPopupTexture.Reset();
+	ResetSharedTextureRing();
+	ResetSharedPopupPlane();
 }
 
 void OsrHandler::ReleaseD3DResources()
@@ -362,6 +349,110 @@ void OsrHandler::ShutdownSharedChannels()
 	m_inputBuffer.Shutdown();
 	m_controlBuffer.Shutdown();
 	m_consoleBuffer.Shutdown();
+}
+
+void OsrHandler::ResetSharedTextureRing()
+{
+	for (uint32_t i = 0; i < BUFFER_COUNT; ++i)
+	{
+		if (m_sharedNTHandle[i])
+		{
+			CloseHandle(m_sharedNTHandle[i]);
+			m_sharedNTHandle[i] = nullptr;
+		}
+		m_sharedTexture[i].Reset();
+	}
+}
+
+bool OsrHandler::CreateSharedTextureRing(ID3D11Device* device, const D3D11_TEXTURE2D_DESC& desc)
+{
+	for (uint32_t i = 0; i < BUFFER_COUNT; ++i)
+	{
+		HRESULT hr = device->CreateTexture2D(&desc, nullptr, &m_sharedTexture[i]);
+		if (FAILED(hr))
+		{
+			fprintf(stderr, "[OsrHandler] CreateTexture2D[%u] failed: 0x%08X\n", i, hr);
+			return false;
+		}
+
+		ComPtr<IDXGIResource1> dxgiRes;
+		hr = m_sharedTexture[i].As(&dxgiRes);
+		if (FAILED(hr))
+		{
+			fprintf(stderr, "[OsrHandler] IDXGIResource1[%u] failed: 0x%08X\n", i, hr);
+			return false;
+		}
+
+		wchar_t name[64];
+		swprintf(name, 64, L"Global\\CEFHost_SharedTex_%u", i);
+		hr = dxgiRes->CreateSharedHandle(
+			nullptr, DXGI_SHARED_RESOURCE_READ, name, &m_sharedNTHandle[i]);
+		if (FAILED(hr))
+		{
+			fprintf(stderr, "[OsrHandler] CreateSharedHandle[%u] failed: 0x%08X\n", i, hr);
+			return false;
+		}
+		fprintf(stdout, "[OsrHandler] Created named shared handle[%u]: %ls\n", i, name);
+	}
+
+	return true;
+}
+
+void OsrHandler::ResetSharedPopupPlane()
+{
+	if (m_sharedPopupHandle)
+	{
+		CloseHandle(m_sharedPopupHandle);
+		m_sharedPopupHandle = nullptr;
+	}
+	m_sharedPopupTexture.Reset();
+}
+
+bool OsrHandler::CreateSharedPopupPlane(ID3D11Device* device, const D3D11_TEXTURE2D_DESC& desc)
+{
+	HRESULT hr = device->CreateTexture2D(&desc, nullptr, &m_sharedPopupTexture);
+	if (FAILED(hr))
+	{
+		fprintf(stderr, "[OsrHandler] CreateTexture2D popup plane failed: 0x%08X\n", hr);
+		return false;
+	}
+
+	ComPtr<IDXGIResource1> popupDxgi;
+	hr = m_sharedPopupTexture.As(&popupDxgi);
+	if (FAILED(hr))
+	{
+		fprintf(stderr, "[OsrHandler] IDXGIResource1 popup plane failed: 0x%08X\n", hr);
+		return false;
+	}
+
+	hr = popupDxgi->CreateSharedHandle(nullptr, DXGI_SHARED_RESOURCE_READ,
+		L"Global\\CEFHost_SharedPopupTex", &m_sharedPopupHandle);
+	if (FAILED(hr))
+	{
+		fprintf(stderr, "[OsrHandler] CreateSharedHandle popup plane failed: 0x%08X\n", hr);
+		return false;
+	}
+
+	return true;
+}
+
+void OsrHandler::UpdateSharedResizeHeader(uint32_t width, uint32_t height)
+{
+	FrameHeader* header = m_frameBuffer.GetHeader();
+	if (!header)
+		return;
+
+	header->protocol_magic = SHM_PROTOCOL_MAGIC;
+	header->version = SHM_PROTOCOL_VERSION;
+	header->slot_count = BUFFER_COUNT;
+	header->width = width;
+	header->height = height;
+	header->write_slot = m_writeSlot;
+	header->gpu_fence_value = 0;
+	header->flags = FRAME_FLAG_FULL_FRAME | FRAME_FLAG_RESIZED;
+	header->popup_visible = 0;
+	header->popup_rect = { 0, 0, 0, 0 };
+	header->dirty_count = 0;
 }
 
 bool OsrHandler::Init()
@@ -402,15 +493,8 @@ bool OsrHandler::EnsureSharedTextures(uint32_t width, uint32_t height, bool* out
 	if (ready)
 		return true;
 
-	for (uint32_t i = 0; i < BUFFER_COUNT; ++i)
-	{
-		if (m_sharedNTHandle[i])
-		{
-			CloseHandle(m_sharedNTHandle[i]);
-			m_sharedNTHandle[i] = nullptr;
-		}
-		m_sharedTexture[i].Reset();
-	}
+	ResetSharedTextureRing();
+	ResetSharedPopupPlane();
 
 	ID3D11Device* device = g_D3D11Device.GetDevice();
 	if (!device)
@@ -427,70 +511,10 @@ bool OsrHandler::EnsureSharedTextures(uint32_t width, uint32_t height, bool* out
 	desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 	desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED;
 
-	for (uint32_t i = 0; i < BUFFER_COUNT; ++i)
-	{
-		HRESULT hr = device->CreateTexture2D(&desc, nullptr, &m_sharedTexture[i]);
-		if (FAILED(hr))
-		{
-			fprintf(stderr, "[OsrHandler] CreateTexture2D[%u] failed: 0x%08X\n", i, hr);
-			return false;
-		}
-
-		ComPtr<IDXGIResource1> dxgiRes;
-		hr = m_sharedTexture[i].As(&dxgiRes);
-		if (FAILED(hr))
-		{
-			fprintf(stderr, "[OsrHandler] IDXGIResource1[%u] failed: 0x%08X\n", i, hr);
-			return false;
-		}
-
-		// Named handle � UE opens by name, no duplication needed
-		wchar_t name[64];
-		swprintf(name, 64, L"Global\\CEFHost_SharedTex_%u", i);
-
-		hr = dxgiRes->CreateSharedHandle(
-			nullptr, DXGI_SHARED_RESOURCE_READ, name, &m_sharedNTHandle[i]);
-		if (FAILED(hr))
-		{
-			fprintf(stderr, "[OsrHandler] CreateSharedHandle[%u] failed: 0x%08X\n", i, hr);
-			return false;
-		}
-
-		fprintf(stdout, "[OsrHandler] Created named shared handle[%u]: %ls\n", i, name);
-	}
-
-	// Dedicated popup plane texture (same size as view; UE copies only popup rect).
-	{
-		if (m_sharedPopupHandle)
-		{
-			CloseHandle(m_sharedPopupHandle);
-			m_sharedPopupHandle = nullptr;
-		}
-		m_sharedPopupTexture.Reset();
-
-		HRESULT hr = device->CreateTexture2D(&desc, nullptr, &m_sharedPopupTexture);
-		if (FAILED(hr))
-		{
-			fprintf(stderr, "[OsrHandler] CreateTexture2D popup plane failed: 0x%08X\n", hr);
-			return false;
-		}
-
-		ComPtr<IDXGIResource1> popupDxgi;
-		hr = m_sharedPopupTexture.As(&popupDxgi);
-		if (FAILED(hr))
-		{
-			fprintf(stderr, "[OsrHandler] IDXGIResource1 popup plane failed: 0x%08X\n", hr);
-			return false;
-		}
-
-		hr = popupDxgi->CreateSharedHandle(nullptr, DXGI_SHARED_RESOURCE_READ,
-			L"Global\\CEFHost_SharedPopupTex", &m_sharedPopupHandle);
-		if (FAILED(hr))
-		{
-			fprintf(stderr, "[OsrHandler] CreateSharedHandle popup plane failed: 0x%08X\n", hr);
-			return false;
-		}
-	}
+	if (!CreateSharedTextureRing(device, desc))
+		return false;
+	if (!CreateSharedPopupPlane(device, desc))
+		return false;
 
 	m_sharedWidth = width;
 	m_sharedHeight = height;
@@ -500,21 +524,7 @@ bool OsrHandler::EnsureSharedTextures(uint32_t width, uint32_t height, bool* out
 	if (outRecreated)
 		*outRecreated = true;
 
-	FrameHeader* header = m_frameBuffer.GetHeader();
-	if (header)
-	{
-		header->protocol_magic = SHM_PROTOCOL_MAGIC;
-		header->version = SHM_PROTOCOL_VERSION;
-		header->slot_count = BUFFER_COUNT;
-		header->width = width;
-		header->height = height;
-		header->write_slot = m_writeSlot;
-		header->gpu_fence_value = 0;
-		header->flags = FRAME_FLAG_FULL_FRAME | FRAME_FLAG_RESIZED;
-		header->popup_visible = 0;
-		header->popup_rect = { 0, 0, 0, 0 };
-		header->dirty_count = 0;
-	}
+	UpdateSharedResizeHeader(width, height);
 
 	fprintf(stdout, "[OsrHandler] Shared textures created: slots=%u size=%ux%u\n", BUFFER_COUNT, width, height);
 	return true;

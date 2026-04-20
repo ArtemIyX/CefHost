@@ -126,6 +126,11 @@ private:
 	void ReleaseSharedTextureResources();
 	void ReleaseD3DResources();
 	void ShutdownSharedChannels();
+	void ResetSharedTextureRing();
+	bool CreateSharedTextureRing(ID3D11Device* device, const D3D11_TEXTURE2D_DESC& desc);
+	void ResetSharedPopupPlane();
+	bool CreateSharedPopupPlane(ID3D11Device* device, const D3D11_TEXTURE2D_DESC& desc);
+	void UpdateSharedResizeHeader(uint32_t width, uint32_t height);
 	void RenderThreadMain();
 	void InputThreadMain();
 	void ControlThreadMain();

@@ -492,3 +492,21 @@ YYYY-MM-DD HH:MM
 ### Impact
 - No intentional behavior change.
 - Build remains green after refactor.
+
+---
+
+## 2026-04-20 13:27
+
+### Changed
+- Refactored OsrHandler lifecycle methods into smaller units:
+  - init path: InitSharedChannels, InitD3DInterfaces, InitFrameHeaderDefaults
+  - shutdown path: ReleaseSharedTextureResources, ReleaseD3DResources, ShutdownSharedChannels
+- Reduced Init/Shutdown to orchestration logic.
+
+### Why
+- Keep resource ownership and teardown order explicit.
+- Make initialization failures and cleanup flow easier to reason about.
+
+### Impact
+- No intentional feature/protocol changes.
+- Build remains green after refactor.
