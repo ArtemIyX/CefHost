@@ -29,7 +29,7 @@ struct HostRuntimeConfig
 	 * @param argv Argument values from main.
 	 * @return Parsed and sanitized runtime config.
 	 */
-	static HostRuntimeConfig FromArgs(int argc, char *argv[]);
+	static HostRuntimeConfig FromArgs(int argc, char* argv[]);
 	/** @brief Prints supported command-line options. */
 	static void PrintUsage();
 };

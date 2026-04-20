@@ -12,45 +12,43 @@ D3D11Device g_D3D11Device;
 
 int main(int argc, char* argv[])
 {
-    // Parse runtime knobs before CEF starts.
-    HostRuntimeConfig config = HostRuntimeConfig::FromArgs(argc, argv);
-    if (config.ShowHelp)
-    {
-        HostRuntimeConfig::PrintUsage();
-        return 0;
-    }
+	// Parse runtime knobs before CEF starts.
+	HostRuntimeConfig config = HostRuntimeConfig::FromArgs(argc, argv);
+	if (config.ShowHelp)
+	{
+		HostRuntimeConfig::PrintUsage();
+		return 0;
+	}
 
-    CefMainArgs main_args(::GetModuleHandle(nullptr));
+	CefMainArgs main_args(::GetModuleHandle(nullptr));
 
-    CefRefPtr<CefHostBrowserApp> app(new CefHostBrowserApp(config));
+	CefRefPtr<CefHostBrowserApp> app(new CefHostBrowserApp(config));
 
-    int exit_code = CefExecuteProcess(main_args, app, nullptr);
-    if (exit_code >= 0)
-        return exit_code;
+	int exit_code = CefExecuteProcess(main_args, app, nullptr);
+	if (exit_code >= 0)
+		return exit_code;
 
-    if (!g_D3D11Device.Init())
-    {
-        fprintf(stderr, "[main] Failed to initialize D3D11 device.\n");
-        return 1;
-    }
+	if (!g_D3D11Device.Init())
+	{
+		fprintf(stderr, "[main] Failed to initialize D3D11 device.\n");
+		return 1;
+	}
 
+	// Raise system timer granularity so begin-frame pacing has lower jitter.
+	timeBeginPeriod(1);
 
+	CefSettings settings;
+	settings.no_sandbox = true;
+	settings.windowless_rendering_enabled = true;
 
-    // Raise system timer granularity so begin-frame pacing has lower jitter.
-    timeBeginPeriod(1);
+	CefInitialize(main_args, settings, app, nullptr);
+	CefRunMessageLoop();
+	CefShutdown();
 
-    CefSettings settings;
-    settings.no_sandbox = true;
-    settings.windowless_rendering_enabled = true;
+	// Must symmetrically restore timer granularity before process exit.
+	timeEndPeriod(1);
 
-    CefInitialize(main_args, settings, app, nullptr);
-    CefRunMessageLoop();
-    CefShutdown();
+	g_D3D11Device.Shutdown();
 
-    // Must symmetrically restore timer granularity before process exit.
-    timeEndPeriod(1);
-
-    g_D3D11Device.Shutdown();
-
-    return 0;
+	return 0;
 }

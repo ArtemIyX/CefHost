@@ -529,3 +529,18 @@ YYYY-MM-DD HH:MM
 ### Impact
 - No intentional behavior change.
 - Build remains green after refactor.
+
+---
+
+## 2026-04-20 13:36
+
+### Changed
+- Ran clang-format over all C++ headers/sources in include/ and src/ using repository .clang-format.
+- Committed style-only formatting updates across remaining files.
+
+### Why
+- Enforce consistent code style project-wide after refactor batches.
+
+### Impact
+- Formatting-only changes; no intended behavior changes.
+- Build remains green after formatting pass.

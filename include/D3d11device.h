@@ -76,11 +76,11 @@ public:
 	}
 
 	/** @brief Returns raw ID3D11Device pointer. */
-	ID3D11Device *GetDevice() const { return m_device.Get(); }
+	ID3D11Device* GetDevice() const { return m_device.Get(); }
 	/** @brief Returns raw immediate context pointer. */
-	ID3D11DeviceContext *GetContext() const { return m_context.Get(); }
+	ID3D11DeviceContext* GetContext() const { return m_context.Get(); }
 	/** @brief Returns raw DXGI factory pointer. */
-	IDXGIFactory2 *GetDXGIFactory() const { return m_dxgiFactory.Get(); }
+	IDXGIFactory2* GetDXGIFactory() const { return m_dxgiFactory.Get(); }
 
 private:
 	ComPtr<ID3D11Device> m_device;
