@@ -37,173 +37,202 @@
 namespace
 {
 #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
-#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+	#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
 #endif
 
-ULONG_PTR SelectAffinityMask(ULONG_PTR processMask, uint32_t logicalIndex)
-{
-	if (processMask == 0) return 0;
-	uint32_t count = 0;
-	for (uint32_t i = 0; i < sizeof(ULONG_PTR) * 8; ++i)
+	ULONG_PTR SelectAffinityMask(ULONG_PTR processMask, uint32_t logicalIndex)
 	{
-		if (processMask & (static_cast<ULONG_PTR>(1) << i))
-			++count;
-	}
-	if (count == 0) return 0;
-	const uint32_t target = logicalIndex % count;
-	uint32_t seen = 0;
-	for (uint32_t i = 0; i < sizeof(ULONG_PTR) * 8; ++i)
-	{
-		const ULONG_PTR bit = static_cast<ULONG_PTR>(1) << i;
-		if ((processMask & bit) == 0) continue;
-		if (seen == target) return bit;
-		++seen;
-	}
-	return 0;
-}
-
-void TryPinCurrentThread(uint32_t logicalIndex)
-{
-	ULONG_PTR processMask = 0, systemMask = 0;
-	if (!GetProcessAffinityMask(GetCurrentProcess(), &processMask, &systemMask))
-		return;
-	const ULONG_PTR mask = SelectAffinityMask(processMask, logicalIndex);
-	if (mask != 0)
-		SetThreadAffinityMask(GetCurrentThread(), mask);
-}
-
-template <size_t N>
-void CopyCefStringToUtf16Array(const CefString& in, char16_t(&out)[N])
-{
-	if constexpr (N == 0)
-		return;
-	for (size_t i = 0; i < N; ++i)
-		out[i] = 0;
-	const std::u16string value = in.ToString16();
-	const size_t copyCount = (value.size() < (N - 1)) ? value.size() : (N - 1);
-	for (size_t i = 0; i < copyCount; ++i)
-		out[i] = value[i];
-}
-
-bool IsAsciiAlpha(char16_t c)
-{
-	return (c >= u'a' && c <= u'z') || (c >= u'A' && c <= u'Z');
-}
-
-std::u16string HexEscapeByte(uint8_t b)
-{
-	static constexpr char16_t kHex[] = u"0123456789ABCDEF";
-	std::u16string out;
-	out.push_back(u'%');
-	out.push_back(kHex[(b >> 4) & 0xF]);
-	out.push_back(kHex[b & 0xF]);
-	return out;
-}
-
-std::u16string EncodeFileUrlPath(const std::u16string& path)
-{
-	// Keep path separators/drive colon intact. Escape only problematic ASCII bytes.
-	std::u16string out;
-	out.reserve(path.size() + 16);
-	for (const char16_t c : path)
-	{
-		if (c == u' ')
+		if (processMask == 0)
+			return 0;
+		uint32_t count = 0;
+		for (uint32_t i = 0; i < sizeof(ULONG_PTR) * 8; ++i)
 		{
-			out += u"%20";
+			if (processMask & (static_cast<ULONG_PTR>(1) << i))
+				++count;
 		}
-		else if (c == u'#')
+		if (count == 0)
+			return 0;
+		const uint32_t target = logicalIndex % count;
+		uint32_t seen = 0;
+		for (uint32_t i = 0; i < sizeof(ULONG_PTR) * 8; ++i)
 		{
-			out += u"%23";
+			const ULONG_PTR bit = static_cast<ULONG_PTR>(1) << i;
+			if ((processMask & bit) == 0)
+				continue;
+			if (seen == target)
+				return bit;
+			++seen;
 		}
-		else if (c == u'?')
-		{
-			out += u"%3F";
-		}
-		else if (c == u'%')
-		{
-			out += u"%25";
-		}
-		else if (c < 0x20)
-		{
-			out += HexEscapeByte(static_cast<uint8_t>(c));
-		}
-		else
-		{
-			out.push_back(c);
-		}
-	}
-	return out;
-}
-
-CefString MakeFileUrlFromPath(const CefString& rawPath)
-{
-	std::u16string path = rawPath.ToString16();
-	for (auto& ch : path)
-	{
-		if (ch == u'\\') ch = u'/';
+		return 0;
 	}
 
-	const std::u16string filePrefix = u"file://";
-	if (path.rfind(filePrefix, 0) == 0)
+	void TryPinCurrentThread(uint32_t logicalIndex)
 	{
-		return CefString(path);
+		ULONG_PTR processMask = 0, systemMask = 0;
+		if (!GetProcessAffinityMask(GetCurrentProcess(), &processMask, &systemMask))
+			return;
+		const ULONG_PTR mask = SelectAffinityMask(processMask, logicalIndex);
+		if (mask != 0)
+			SetThreadAffinityMask(GetCurrentThread(), mask);
 	}
 
-	// UNC path: //server/share/file.html
-	if (path.size() >= 2 && path[0] == u'/' && path[1] == u'/')
+	template <size_t N>
+	void CopyCefStringToUtf16Array(const CefString& in, char16_t (&out)[N])
 	{
-		return CefString(u"file:" + EncodeFileUrlPath(path));
+		if constexpr (N == 0)
+			return;
+		for (size_t i = 0; i < N; ++i)
+			out[i] = 0;
+		const std::u16string value = in.ToString16();
+		const size_t copyCount = (value.size() < (N - 1)) ? value.size() : (N - 1);
+		for (size_t i = 0; i < copyCount; ++i)
+			out[i] = value[i];
 	}
 
-	// Windows drive path: C:/...
-	if (path.size() >= 3 && IsAsciiAlpha(path[0]) && path[1] == u':' && path[2] == u'/')
+	bool IsAsciiAlpha(char16_t c)
 	{
+		return (c >= u'a' && c <= u'z') || (c >= u'A' && c <= u'Z');
+	}
+
+	std::u16string HexEscapeByte(uint8_t b)
+	{
+		static constexpr char16_t kHex[] = u"0123456789ABCDEF";
+		std::u16string out;
+		out.push_back(u'%');
+		out.push_back(kHex[(b >> 4) & 0xF]);
+		out.push_back(kHex[b & 0xF]);
+		return out;
+	}
+
+	std::u16string EncodeFileUrlPath(const std::u16string& path)
+	{
+		// Keep path separators/drive colon intact. Escape only problematic ASCII bytes.
+		std::u16string out;
+		out.reserve(path.size() + 16);
+		for (const char16_t c : path)
+		{
+			if (c == u' ')
+			{
+				out += u"%20";
+			}
+			else if (c == u'#')
+			{
+				out += u"%23";
+			}
+			else if (c == u'?')
+			{
+				out += u"%3F";
+			}
+			else if (c == u'%')
+			{
+				out += u"%25";
+			}
+			else if (c < 0x20)
+			{
+				out += HexEscapeByte(static_cast<uint8_t>(c));
+			}
+			else
+			{
+				out.push_back(c);
+			}
+		}
+		return out;
+	}
+
+	CefString MakeFileUrlFromPath(const CefString& rawPath)
+	{
+		std::u16string path = rawPath.ToString16();
+		for (auto& ch : path)
+		{
+			if (ch == u'\\')
+				ch = u'/';
+		}
+
+		const std::u16string filePrefix = u"file://";
+		if (path.rfind(filePrefix, 0) == 0)
+		{
+			return CefString(path);
+		}
+
+		// UNC path: //server/share/file.html
+		if (path.size() >= 2 && path[0] == u'/' && path[1] == u'/')
+		{
+			return CefString(u"file:" + EncodeFileUrlPath(path));
+		}
+
+		// Windows drive path: C:/...
+		if (path.size() >= 3 && IsAsciiAlpha(path[0]) && path[1] == u':' && path[2] == u'/')
+		{
+			return CefString(u"file:///" + EncodeFileUrlPath(path));
+		}
+
+		// Absolute path without drive (rare on Windows).
+		if (!path.empty() && path[0] == u'/')
+		{
+			return CefString(u"file://" + EncodeFileUrlPath(path));
+		}
+
+		// Fallback: treat as local relative path.
 		return CefString(u"file:///" + EncodeFileUrlPath(path));
 	}
 
-	// Absolute path without drive (rare on Windows).
-	if (!path.empty() && path[0] == u'/')
+	const char* ControlEventTypeToString(ControlEventType type)
 	{
-		return CefString(u"file://" + EncodeFileUrlPath(path));
+		switch (type)
+		{
+			case ControlEventType::GoBack:
+				return "GoBack";
+			case ControlEventType::GoForward:
+				return "GoForward";
+			case ControlEventType::StopLoad:
+				return "StopLoad";
+			case ControlEventType::Reload:
+				return "Reload";
+			case ControlEventType::SetURL:
+				return "SetURL";
+			case ControlEventType::SetPaused:
+				return "SetPaused";
+			case ControlEventType::SetHidden:
+				return "SetHidden";
+			case ControlEventType::SetFocus:
+				return "SetFocus";
+			case ControlEventType::SetZoomLevel:
+				return "SetZoomLevel";
+			case ControlEventType::SetFrameRate:
+				return "SetFrameRate";
+			case ControlEventType::ScrollTo:
+				return "ScrollTo";
+			case ControlEventType::Resize:
+				return "Resize";
+			case ControlEventType::SetMuted:
+				return "SetMuted";
+			case ControlEventType::OpenDevTools:
+				return "OpenDevTools";
+			case ControlEventType::CloseDevTools:
+				return "CloseDevTools";
+			case ControlEventType::SetInputEnabled:
+				return "SetInputEnabled";
+			case ControlEventType::ExecuteJS:
+				return "ExecuteJS";
+			case ControlEventType::ClearCookies:
+				return "ClearCookies";
+			case ControlEventType::SetConsumerCadenceUs:
+				return "SetConsumerCadenceUs";
+			case ControlEventType::SetMaxInFlightBeginFrames:
+				return "SetMaxInFlightBeginFrames";
+			case ControlEventType::SetFlushIntervalFrames:
+				return "SetFlushIntervalFrames";
+			case ControlEventType::SetKeyframeIntervalUs:
+				return "SetKeyframeIntervalUs";
+			case ControlEventType::OpenLocalFile:
+				return "OpenLocalFile";
+			case ControlEventType::LoadHtmlString:
+				return "LoadHtmlString";
+			default:
+				return "Unknown";
+		}
 	}
-
-	// Fallback: treat as local relative path.
-	return CefString(u"file:///" + EncodeFileUrlPath(path));
-}
-
-const char* ControlEventTypeToString(ControlEventType type)
-{
-	switch (type)
-	{
-	case ControlEventType::GoBack: return "GoBack";
-	case ControlEventType::GoForward: return "GoForward";
-	case ControlEventType::StopLoad: return "StopLoad";
-	case ControlEventType::Reload: return "Reload";
-	case ControlEventType::SetURL: return "SetURL";
-	case ControlEventType::SetPaused: return "SetPaused";
-	case ControlEventType::SetHidden: return "SetHidden";
-	case ControlEventType::SetFocus: return "SetFocus";
-	case ControlEventType::SetZoomLevel: return "SetZoomLevel";
-	case ControlEventType::SetFrameRate: return "SetFrameRate";
-	case ControlEventType::ScrollTo: return "ScrollTo";
-	case ControlEventType::Resize: return "Resize";
-	case ControlEventType::SetMuted: return "SetMuted";
-	case ControlEventType::OpenDevTools: return "OpenDevTools";
-	case ControlEventType::CloseDevTools: return "CloseDevTools";
-	case ControlEventType::SetInputEnabled: return "SetInputEnabled";
-	case ControlEventType::ExecuteJS: return "ExecuteJS";
-	case ControlEventType::ClearCookies: return "ClearCookies";
-	case ControlEventType::SetConsumerCadenceUs: return "SetConsumerCadenceUs";
-	case ControlEventType::SetMaxInFlightBeginFrames: return "SetMaxInFlightBeginFrames";
-	case ControlEventType::SetFlushIntervalFrames: return "SetFlushIntervalFrames";
-	case ControlEventType::SetKeyframeIntervalUs: return "SetKeyframeIntervalUs";
-	case ControlEventType::OpenLocalFile: return "OpenLocalFile";
-	case ControlEventType::LoadHtmlString: return "LoadHtmlString";
-	default: return "Unknown";
-	}
-}
-}
-
+} // namespace
 
 extern D3D11Device g_D3D11Device;
 
@@ -215,10 +244,14 @@ OsrHandler::OsrHandler(uint32_t width, uint32_t height, uint32_t targetFps)
 
 bool OsrHandler::Init()
 {
-	if (!m_frameBuffer.Init())   return false;
-	if (!m_inputBuffer.Init())   return false;
-	if (!m_controlBuffer.Init()) return false;
-	if (!m_consoleBuffer.Init()) return false;
+	if (!m_frameBuffer.Init())
+		return false;
+	if (!m_inputBuffer.Init())
+		return false;
+	if (!m_controlBuffer.Init())
+		return false;
+	if (!m_consoleBuffer.Init())
+		return false;
 
 	HRESULT hr = g_D3D11Device.GetDevice()->QueryInterface(IID_PPV_ARGS(&m_device1));
 	if (FAILED(hr))
@@ -272,7 +305,7 @@ bool OsrHandler::Init()
 		header->gpu_fence_value = 0;
 		header->flags = FRAME_FLAG_FULL_FRAME;
 		header->popup_visible = 0;
-		header->popup_rect = { 0,0,0,0 };
+		header->popup_rect = { 0, 0, 0, 0 };
 		header->dirty_count = 0;
 	}
 
@@ -302,8 +335,10 @@ void OsrHandler::Shutdown()
 		m_sharedPopupTexture.Reset();
 	}
 
-	m_cachedTextureView.Reset();  m_cachedHandleView  = nullptr;
-	m_cachedTexturePopup.Reset(); m_cachedHandlePopup = nullptr;
+	m_cachedTextureView.Reset();
+	m_cachedHandleView = nullptr;
+	m_cachedTexturePopup.Reset();
+	m_cachedHandlePopup = nullptr;
 	if (m_sharedFenceHandle)
 	{
 		CloseHandle(m_sharedFenceHandle);
@@ -321,7 +356,8 @@ void OsrHandler::Shutdown()
 
 bool OsrHandler::EnsureSharedTextures(uint32_t width, uint32_t height, bool* outRecreated)
 {
-	if (outRecreated) *outRecreated = false;
+	if (outRecreated)
+		*outRecreated = false;
 
 	bool ready = (m_sharedWidth == width && m_sharedHeight == height);
 	if (ready)
@@ -349,7 +385,8 @@ bool OsrHandler::EnsureSharedTextures(uint32_t width, uint32_t height, bool* out
 	}
 
 	ID3D11Device* device = g_D3D11Device.GetDevice();
-	if (!device) return false;
+	if (!device)
+		return false;
 
 	D3D11_TEXTURE2D_DESC desc = {};
 	desc.Width = width;
@@ -432,7 +469,8 @@ bool OsrHandler::EnsureSharedTextures(uint32_t width, uint32_t height, bool* out
 	m_writeSlot = 0;
 	m_forceFullFrame.store(true, std::memory_order_relaxed);
 	m_warmupFullFrames = 3;
-	if (outRecreated) *outRecreated = true;
+	if (outRecreated)
+		*outRecreated = true;
 
 	FrameHeader* header = m_frameBuffer.GetHeader();
 	if (header)
@@ -446,7 +484,7 @@ bool OsrHandler::EnsureSharedTextures(uint32_t width, uint32_t height, bool* out
 		header->gpu_fence_value = 0;
 		header->flags = FRAME_FLAG_FULL_FRAME | FRAME_FLAG_RESIZED;
 		header->popup_visible = 0;
-		header->popup_rect = { 0,0,0,0 };
+		header->popup_rect = { 0, 0, 0, 0 };
 		header->dirty_count = 0;
 	}
 
@@ -459,7 +497,8 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 {
 	using namespace std::chrono;
 	const uint64_t copyStartUs = duration_cast<microseconds>(
-		steady_clock::now().time_since_epoch()).count();
+		steady_clock::now().time_since_epoch())
+									 .count();
 	m_lastPaintUs.store(copyStartUs, std::memory_order_relaxed);
 	const uint64_t lastBeginUs = m_lastBeginFrameUs.load(std::memory_order_relaxed);
 	if (lastBeginUs > 0 && copyStartUs >= lastBeginUs)
@@ -470,17 +509,17 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 		{
 			m_statBeginToPaintUsSum.fetch_add(beginToPaintUs, std::memory_order_relaxed);
 			uint64_t prevMax = m_statBeginToPaintUsMax.load(std::memory_order_relaxed);
-			while (beginToPaintUs > prevMax &&
-				!m_statBeginToPaintUsMax.compare_exchange_weak(prevMax, beginToPaintUs, std::memory_order_relaxed))
+			while (beginToPaintUs > prevMax && !m_statBeginToPaintUsMax.compare_exchange_weak(prevMax, beginToPaintUs, std::memory_order_relaxed))
 			{
 			}
 		}
 	}
 
 	ID3D11DeviceContext* context = g_D3D11Device.GetContext();
-	if (!m_device1 || !context) return;
+	if (!m_device1 || !context)
+		return;
 
-	auto& cachedHandle  = (type == PET_POPUP) ? m_cachedHandlePopup  : m_cachedHandleView;
+	auto& cachedHandle = (type == PET_POPUP) ? m_cachedHandlePopup : m_cachedHandleView;
 	auto& cachedTexture = (type == PET_POPUP) ? m_cachedTexturePopup : m_cachedTextureView;
 
 	ComPtr<ID3D11Texture2D> cefTexture;
@@ -492,7 +531,7 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 			fprintf(stderr, "[OsrHandler] OpenSharedResource1 failed: 0x%08X\n", hr);
 			return;
 		}
-		cachedHandle  = info.shared_texture_handle;
+		cachedHandle = info.shared_texture_handle;
 		cachedTexture = cefTexture;
 	}
 	else
@@ -512,21 +551,21 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 		{
 			m_popupTexture.Reset();
 			D3D11_TEXTURE2D_DESC desc = {};
-			desc.Width            = cefDesc.Width;
-			desc.Height           = cefDesc.Height;
-			desc.MipLevels        = 1;
-			desc.ArraySize        = 1;
-			desc.Format           = cefDesc.Format;
+			desc.Width = cefDesc.Width;
+			desc.Height = cefDesc.Height;
+			desc.MipLevels = 1;
+			desc.ArraySize = 1;
+			desc.Format = cefDesc.Format;
 			desc.SampleDesc.Count = 1;
-			desc.Usage            = D3D11_USAGE_DEFAULT;
-			desc.BindFlags        = D3D11_BIND_SHADER_RESOURCE;
+			desc.Usage = D3D11_USAGE_DEFAULT;
+			desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 			HRESULT hr = g_D3D11Device.GetDevice()->CreateTexture2D(&desc, nullptr, &m_popupTexture);
 			if (FAILED(hr))
 			{
 				fprintf(stderr, "[OsrHandler] CreateTexture2D popup failed: 0x%08X\n", hr);
 				return;
 			}
-			m_popupTexWidth  = cefDesc.Width;
+			m_popupTexWidth = cefDesc.Width;
 			m_popupTexHeight = cefDesc.Height;
 		}
 
@@ -605,7 +644,8 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 		return;
 	}
 
-	if (type != PET_VIEW) return;
+	if (type != PET_VIEW)
+		return;
 
 	std::lock_guard<std::mutex> lock(m_textureMutex);
 
@@ -622,11 +662,10 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 	context->CopyResource(m_sharedTexture[backSlot].Get(), cefTexture.Get());
 
 	DirtyRect collectedRects[MAX_DIRTY_RECTS];
-	uint32_t  nRects   = 0;
-	bool      overflow = false;
+	uint32_t nRects = 0;
+	bool overflow = false;
 
-	auto addDirty = [&](int x, int y, int w, int h)
-	{
+	auto addDirty = [&](int x, int y, int w, int h) {
 		if (nRects < MAX_DIRTY_RECTS)
 			collectedRects[nRects++] = { x, y, w, h };
 		else
@@ -727,8 +766,7 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 			for (uint32_t i = 0; i < nRects; ++i)
 			{
 				header->dirty_rects[i] = collectedRects[i];
-				const uint64_t area = static_cast<uint64_t>(collectedRects[i].w > 0 ? collectedRects[i].w : 0) *
-					static_cast<uint64_t>(collectedRects[i].h > 0 ? collectedRects[i].h : 0);
+				const uint64_t area = static_cast<uint64_t>(collectedRects[i].w > 0 ? collectedRects[i].w : 0) * static_cast<uint64_t>(collectedRects[i].h > 0 ? collectedRects[i].h : 0);
 				m_statDirtyRectAreaSum.fetch_add(area, std::memory_order_relaxed);
 			}
 			m_statDirtyRectCountSum.fetch_add(nRects, std::memory_order_relaxed);
@@ -749,8 +787,7 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 
 		++m_framesSinceFlush;
 		const uint32_t flushIntervalFrames = m_flushIntervalFrames.load(std::memory_order_relaxed);
-		const bool shouldFlush = !signaledFence || recreated || forceFull ||
-			(flushIntervalFrames > 0 && m_framesSinceFlush >= flushIntervalFrames);
+		const bool shouldFlush = !signaledFence || recreated || forceFull || (flushIntervalFrames > 0 && m_framesSinceFlush >= flushIntervalFrames);
 		if (shouldFlush)
 		{
 			context->Flush();
@@ -778,13 +815,13 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 		m_statProducedFrames.fetch_add(1, std::memory_order_relaxed);
 		m_paintsCompleted.fetch_add(1, std::memory_order_relaxed);
 		const uint64_t copyEndUs = duration_cast<microseconds>(
-			steady_clock::now().time_since_epoch()).count();
+			steady_clock::now().time_since_epoch())
+									   .count();
 		const uint64_t copySubmitUs = (copyEndUs > copyStartUs) ? (copyEndUs - copyStartUs) : 0;
 		m_lastPublishUs.store(copyEndUs, std::memory_order_relaxed);
 		m_statCopySubmitUsSum.fetch_add(copySubmitUs, std::memory_order_relaxed);
 		uint64_t prevMax = m_statCopySubmitUsMax.load(std::memory_order_relaxed);
-		while (copySubmitUs > prevMax &&
-			!m_statCopySubmitUsMax.compare_exchange_weak(prevMax, copySubmitUs, std::memory_order_relaxed))
+		while (copySubmitUs > prevMax && !m_statCopySubmitUsMax.compare_exchange_weak(prevMax, copySubmitUs, std::memory_order_relaxed))
 		{
 		}
 
@@ -793,8 +830,7 @@ void OsrHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementT
 		{
 			m_lastTelemetryLogUs.store(copyEndUs, std::memory_order_relaxed);
 		}
-		else if (copyEndUs - lastLogUs >= 2000000ULL &&
-			m_lastTelemetryLogUs.compare_exchange_weak(lastLogUs, copyEndUs, std::memory_order_relaxed))
+		else if (copyEndUs - lastLogUs >= 2000000ULL && m_lastTelemetryLogUs.compare_exchange_weak(lastLogUs, copyEndUs, std::memory_order_relaxed))
 		{
 			const uint64_t windowUs = (copyEndUs > lastLogUs) ? (copyEndUs - lastLogUs) : 1ULL;
 			const uint64_t produced = m_statProducedFrames.exchange(0, std::memory_order_relaxed);
@@ -857,15 +893,15 @@ void OsrHandler::TrySendBeginFrame()
 {
 	using namespace std::chrono;
 	uint64_t now = duration_cast<microseconds>(
-		steady_clock::now().time_since_epoch()).count();
+		steady_clock::now().time_since_epoch())
+					   .count();
 
 	// Backpressure: optional cap for in-flight begin-frames.
 	const uint64_t sent = m_beginFramesSent.load(std::memory_order_relaxed);
 	const uint64_t done = m_paintsCompleted.load(std::memory_order_relaxed);
 	const uint64_t inFlight = (sent > done) ? (sent - done) : 0;
 	const uint32_t maxInFlight = m_maxInFlightBeginFrames.load(std::memory_order_relaxed);
-	if (maxInFlight > 0 &&
-		inFlight >= static_cast<uint64_t>(maxInFlight))
+	if (maxInFlight > 0 && inFlight >= static_cast<uint64_t>(maxInFlight))
 		return;
 
 	CefRefPtr<CefBrowser> b = m_browser;
@@ -894,13 +930,16 @@ void OsrHandler::UpdateBeginFrameIntervalFromFps(uint32_t fps)
 
 void OsrHandler::UpdateBeginFrameIntervalFromConsumerCadenceUs(uint32_t cadenceUs)
 {
-	if (cadenceUs == 0) return;
+	if (cadenceUs == 0)
+		return;
 
 	const uint32_t minUs = 1000000u / 240u;
 	const uint32_t maxUs = 1000000u / 15u;
 	uint32_t clamped = cadenceUs;
-	if (clamped < minUs) clamped = minUs;
-	if (clamped > maxUs) clamped = maxUs;
+	if (clamped < minUs)
+		clamped = minUs;
+	if (clamped > maxUs)
+		clamped = maxUs;
 
 	const uint32_t prev = m_smoothedConsumerCadenceUs.load(std::memory_order_relaxed);
 	const uint32_t smooth = (prev == 0) ? clamped : ((prev * 7u + clamped * 3u) / 10u);
@@ -918,63 +957,52 @@ void OsrHandler::StartRenderLoop()
 
 	m_running = true;
 
-	m_renderThread = std::thread([this]()
+	m_renderThread = std::thread([this]() {
+		if (m_enableThreadTuning)
 		{
-			if (m_enableThreadTuning)
-			{
-				SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
-			}
+			SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
+		}
 
-			LARGE_INTEGER qpf{};
-			QueryPerformanceFrequency(&qpf);
-			const LONGLONG freq = (qpf.QuadPart > 0) ? qpf.QuadPart : 1LL;
-			const LONGLONG spinTicks = (freq / 2000LL > 0) ? (freq / 2000LL) : 1LL; // ~0.5ms
+		LARGE_INTEGER qpf{};
+		QueryPerformanceFrequency(&qpf);
+		const LONGLONG freq = (qpf.QuadPart > 0) ? qpf.QuadPart : 1LL;
+		const LONGLONG spinTicks = (freq / 2000LL > 0) ? (freq / 2000LL) : 1LL; // ~0.5ms
 
-			auto nowTicks = []() -> LONGLONG
-			{
-				LARGE_INTEGER t{};
-				QueryPerformanceCounter(&t);
-				return t.QuadPart;
-			};
+		auto nowTicks = []() -> LONGLONG {
+			LARGE_INTEGER t{};
+			QueryPerformanceCounter(&t);
+			return t.QuadPart;
+		};
 
-			HANDLE hiResTimer = CreateWaitableTimerExW(
-				nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
-			if (!hiResTimer)
-			{
-				hiResTimer = CreateWaitableTimerExW(nullptr, nullptr, 0, TIMER_ALL_ACCESS);
-			}
+		HANDLE hiResTimer = CreateWaitableTimerExW(
+			nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+		if (!hiResTimer)
+		{
+			hiResTimer = CreateWaitableTimerExW(nullptr, nullptr, 0, TIMER_ALL_ACCESS);
+		}
 
-			auto waitUntil = [&](LONGLONG targetTick)
+		auto waitUntil = [&](LONGLONG targetTick) {
+			while (m_running)
 			{
-				while (m_running)
+				const LONGLONG now = nowTicks();
+				LONGLONG remaining = targetTick - now;
+				if (remaining <= 0)
+					break;
+
+				// Coarse sleep first, then short spin to reduce wake jitter.
+				if (remaining > spinTicks)
 				{
-					const LONGLONG now = nowTicks();
-					LONGLONG remaining = targetTick - now;
-					if (remaining <= 0)
-						break;
-
-					// Coarse sleep first, then short spin to reduce wake jitter.
-					if (remaining > spinTicks)
+					const LONGLONG sleepTicks = remaining - spinTicks;
+					if (hiResTimer)
 					{
-						const LONGLONG sleepTicks = remaining - spinTicks;
-						if (hiResTimer)
+						LONGLONG due100ns = -((sleepTicks * 10000000LL) / freq);
+						if (due100ns == 0)
+							due100ns = -1;
+						LARGE_INTEGER due{};
+						due.QuadPart = due100ns;
+						if (SetWaitableTimerEx(hiResTimer, &due, 0, nullptr, nullptr, nullptr, 0))
 						{
-							LONGLONG due100ns = -((sleepTicks * 10000000LL) / freq);
-							if (due100ns == 0)
-								due100ns = -1;
-							LARGE_INTEGER due{};
-							due.QuadPart = due100ns;
-							if (SetWaitableTimerEx(hiResTimer, &due, 0, nullptr, nullptr, nullptr, 0))
-							{
-								WaitForSingleObject(hiResTimer, INFINITE);
-							}
-							else
-							{
-								DWORD sleepMs = static_cast<DWORD>((sleepTicks * 1000LL) / freq);
-								if (sleepMs == 0)
-									sleepMs = 1;
-								Sleep(sleepMs);
-							}
+							WaitForSingleObject(hiResTimer, INFINITE);
 						}
 						else
 						{
@@ -986,112 +1014,123 @@ void OsrHandler::StartRenderLoop()
 					}
 					else
 					{
-						YieldProcessor();
+						DWORD sleepMs = static_cast<DWORD>((sleepTicks * 1000LL) / freq);
+						if (sleepMs == 0)
+							sleepMs = 1;
+						Sleep(sleepMs);
 					}
 				}
-			};
-
-			LONGLONG nextTick = nowTicks();
-
-			while (m_running)
-			{
-				const uint64_t intervalNs = m_beginFrameIntervalNs.load(std::memory_order_relaxed);
-				const uint64_t ns = (intervalNs > 0ULL) ? intervalNs : 16666666ULL;
-				LONGLONG frameTicks = static_cast<LONGLONG>((ns * static_cast<uint64_t>(freq) + 999999999ULL) / 1000000000ULL);
-				if (frameTicks <= 0)
-					frameTicks = 1;
-
-				nextTick += frameTicks;
-				waitUntil(nextTick);
-				if (!m_running)
-					break;
-
-				const LONGLONG wakeTick = nowTicks();
-				if (wakeTick > nextTick)
+				else
 				{
-					const uint64_t lateUs = static_cast<uint64_t>(((wakeTick - nextTick) * 1000000LL) / freq);
-					if (lateUs > 500ULL)
-					{
-						m_statSchedMissCount.fetch_add(1, std::memory_order_relaxed);
-						m_statSchedLateUsSum.fetch_add(lateUs, std::memory_order_relaxed);
-						uint64_t prevMax = m_statSchedLateUsMax.load(std::memory_order_relaxed);
-						while (lateUs > prevMax &&
-							!m_statSchedLateUsMax.compare_exchange_weak(prevMax, lateUs, std::memory_order_relaxed))
-						{
-						}
-					}
-				}
-
-				if (!m_paused)
-				{
-					TrySendBeginFrame();
-					TryIdleRepairInvalidate();
-				}
-
-				// Resync only on major stalls to avoid aggressive skip/drop behavior.
-				const LONGLONG afterTick = nowTicks();
-				if (afterTick > nextTick + frameTicks * 4)
-				{
-					nextTick = afterTick;
+					YieldProcessor();
 				}
 			}
+		};
 
-			if (hiResTimer)
-				CloseHandle(hiResTimer);
-		});
+		LONGLONG nextTick = nowTicks();
 
-	m_inputThread = std::thread([this]()
+		while (m_running)
 		{
-			if (m_enableThreadTuning)
+			const uint64_t intervalNs = m_beginFrameIntervalNs.load(std::memory_order_relaxed);
+			const uint64_t ns = (intervalNs > 0ULL) ? intervalNs : 16666666ULL;
+			LONGLONG frameTicks = static_cast<LONGLONG>((ns * static_cast<uint64_t>(freq) + 999999999ULL) / 1000000000ULL);
+			if (frameTicks <= 0)
+				frameTicks = 1;
+
+			nextTick += frameTicks;
+			waitUntil(nextTick);
+			if (!m_running)
+				break;
+
+			const LONGLONG wakeTick = nowTicks();
+			if (wakeTick > nextTick)
 			{
-				SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
-				TryPinCurrentThread(1);
+				const uint64_t lateUs = static_cast<uint64_t>(((wakeTick - nextTick) * 1000000LL) / freq);
+				if (lateUs > 500ULL)
+				{
+					m_statSchedMissCount.fetch_add(1, std::memory_order_relaxed);
+					m_statSchedLateUsSum.fetch_add(lateUs, std::memory_order_relaxed);
+					uint64_t prevMax = m_statSchedLateUsMax.load(std::memory_order_relaxed);
+					while (lateUs > prevMax && !m_statSchedLateUsMax.compare_exchange_weak(prevMax, lateUs, std::memory_order_relaxed))
+					{
+					}
+				}
 			}
 
-			LARGE_INTEGER freq, start, now;
-			QueryPerformanceFrequency(&freq);
-			// Spin for 0.5ms before falling back to a blocking wait.
-			const LONGLONG spinTicks = freq.QuadPart / 2000;
+			if (!m_paused)
+			{
+				TrySendBeginFrame();
+				TryIdleRepairInvalidate();
+			}
 
+			// Resync only on major stalls to avoid aggressive skip/drop behavior.
+			const LONGLONG afterTick = nowTicks();
+			if (afterTick > nextTick + frameTicks * 4)
+			{
+				nextTick = afterTick;
+			}
+		}
+
+		if (hiResTimer)
+			CloseHandle(hiResTimer);
+	});
+
+	m_inputThread = std::thread([this]() {
+		if (m_enableThreadTuning)
+		{
+			SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+			TryPinCurrentThread(1);
+		}
+
+		LARGE_INTEGER freq, start, now;
+		QueryPerformanceFrequency(&freq);
+		// Spin for 0.5ms before falling back to a blocking wait.
+		const LONGLONG spinTicks = freq.QuadPart / 2000;
+
+		while (m_running)
+		{
+			if (m_inputBuffer.HasPendingEvents())
+			{
+				PumpInput();
+				continue;
+			}
+
+			// Spin phase: catch events that arrive within 0.5ms.
+			QueryPerformanceCounter(&start);
+			bool found = false;
 			while (m_running)
 			{
 				if (m_inputBuffer.HasPendingEvents())
 				{
-					PumpInput();
-					continue;
+					found = true;
+					break;
 				}
-
-				// Spin phase: catch events that arrive within 0.5ms.
-				QueryPerformanceCounter(&start);
-				bool found = false;
-				while (m_running)
-				{
-					if (m_inputBuffer.HasPendingEvents()) { found = true; break; }
-					QueryPerformanceCounter(&now);
-					if (now.QuadPart - start.QuadPart >= spinTicks) break;
-					YieldProcessor();
-				}
-
-				if (found)
-					PumpInput();
-				else
-					WaitForSingleObject(m_inputBuffer.GetEvent(), 100);
+				QueryPerformanceCounter(&now);
+				if (now.QuadPart - start.QuadPart >= spinTicks)
+					break;
+				YieldProcessor();
 			}
-		});
 
-	m_controlThread = std::thread([this]()
+			if (found)
+				PumpInput();
+			else
+				WaitForSingleObject(m_inputBuffer.GetEvent(), 100);
+		}
+	});
+
+	m_controlThread = std::thread([this]() {
+		if (m_enableThreadTuning)
 		{
-			if (m_enableThreadTuning)
-			{
-				SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
-				TryPinCurrentThread(2);
-			}
-			while (m_running)
-			{
-				WaitForSingleObject(m_controlBuffer.GetEvent(), 100);
-				if (m_running) PumpControl();
-			}
-		});
+			SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
+			TryPinCurrentThread(2);
+		}
+		while (m_running)
+		{
+			WaitForSingleObject(m_controlBuffer.GetEvent(), 100);
+			if (m_running)
+				PumpControl();
+		}
+	});
 }
 
 void OsrHandler::StopRenderLoop()
@@ -1101,9 +1140,12 @@ void OsrHandler::StopRenderLoop()
 	SetEvent(m_inputBuffer.GetEvent());
 	SetEvent(m_controlBuffer.GetEvent());
 
-	if (m_renderThread.joinable())  m_renderThread.join();
-	if (m_inputThread.joinable())   m_inputThread.join();
-	if (m_controlThread.joinable()) m_controlThread.join();
+	if (m_renderThread.joinable())
+		m_renderThread.join();
+	if (m_inputThread.joinable())
+		m_inputThread.join();
+	if (m_controlThread.joinable())
+		m_controlThread.join();
 
 	if (m_timerPeriodRaised)
 	{
@@ -1114,9 +1156,11 @@ void OsrHandler::StopRenderLoop()
 
 void OsrHandler::OnLoadStart(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, TransitionType transition_type)
 {
-	if (!frame->IsMain()) return;
+	if (!frame->IsMain())
+		return;
 	FrameHeader* header = m_frameBuffer.GetHeader();
-	if (!header) return;
+	if (!header)
+		return;
 	header->load_state = CefLoadState::Loading;
 	std::atomic_thread_fence(std::memory_order_release);
 	InterlockedIncrement(reinterpret_cast<volatile LONG*>(&header->sequence));
@@ -1125,9 +1169,11 @@ void OsrHandler::OnLoadStart(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> 
 
 void OsrHandler::OnLoadEnd(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, int http_status_code)
 {
-	if (!frame->IsMain()) return;
+	if (!frame->IsMain())
+		return;
 	FrameHeader* header = m_frameBuffer.GetHeader();
-	if (!header) return;
+	if (!header)
+		return;
 	header->load_state = (http_status_code >= 400) ? CefLoadState::Error : CefLoadState::Ready;
 	std::atomic_thread_fence(std::memory_order_release);
 	InterlockedIncrement(reinterpret_cast<volatile LONG*>(&header->sequence));
@@ -1137,9 +1183,11 @@ void OsrHandler::OnLoadEnd(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> fr
 void OsrHandler::OnLoadError(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
 	ErrorCode error_code, const CefString& error_text, const CefString& failed_url)
 {
-	if (!frame->IsMain()) return;
+	if (!frame->IsMain())
+		return;
 	FrameHeader* header = m_frameBuffer.GetHeader();
-	if (!header) return;
+	if (!header)
+		return;
 	header->load_state = CefLoadState::Error;
 	std::atomic_thread_fence(std::memory_order_release);
 	InterlockedIncrement(reinterpret_cast<volatile LONG*>(&header->sequence));
@@ -1166,7 +1214,10 @@ void OsrHandler::OnPopupShow(CefRefPtr<CefBrowser> browser, bool show)
 	if (!show && m_popupRect.width > 0)
 		m_popupClearRect = m_popupRect;
 	m_popupVisible = show;
-	if (!show) { m_popupRect = {}; }
+	if (!show)
+	{
+		m_popupRect = {};
+	}
 }
 
 void OsrHandler::OnPopupSize(CefRefPtr<CefBrowser> browser, const CefRect& rect)
@@ -1224,79 +1275,75 @@ void OsrHandler::Resize(uint32_t width, uint32_t height)
 		m_browser->GetHost()->WasResized();
 }
 
-void OsrHandler::PumpInput()
+void OsrHandler::TryInputNudgeFrame()
 {
-	CefRefPtr<CefBrowser> browser = m_browser;
-	if (!browser) return;
-	CefRefPtr<CefBrowserHost> host = browser->GetHost();
-	InputEvent evt;
-	bool shouldNudgeFrame = false;
-	uint32_t processedEvents = 0;
-	constexpr uint32_t kMaxEventsPerPump = 64;
-	constexpr uint32_t kNudgeEveryEvents = 8;
-	auto tryInputNudge = [this]()
+	if (m_paused.load(std::memory_order_relaxed))
+		return;
+
+	using namespace std::chrono;
+	const uint64_t now = duration_cast<microseconds>(
+		steady_clock::now().time_since_epoch())
+							 .count();
+	const uint64_t intervalNs = m_beginFrameIntervalNs.load(std::memory_order_relaxed);
+	const uint64_t cadenceUs = (intervalNs / 1000ULL > 0ULL) ? (intervalNs / 1000ULL) : 1ULL;
+	const uint64_t nudgeUs = (cadenceUs < 2000ULL) ? cadenceUs : 2000ULL;
+
+	uint64_t prev = m_lastBeginFrameUs.load(std::memory_order_relaxed);
+	while (true)
 	{
-		if (m_paused.load(std::memory_order_relaxed))
-			return;
-
-		using namespace std::chrono;
-		const uint64_t now = duration_cast<microseconds>(
-			steady_clock::now().time_since_epoch()).count();
-		const uint64_t intervalNs = m_beginFrameIntervalNs.load(std::memory_order_relaxed);
-		const uint64_t cadenceUs = (intervalNs / 1000ULL > 0ULL) ? (intervalNs / 1000ULL) : 1ULL;
-		const uint64_t nudgeUs = (cadenceUs < 2000ULL) ? cadenceUs : 2000ULL;
-
-		uint64_t prev = m_lastBeginFrameUs.load(std::memory_order_relaxed);
-		while (true)
+		if (now - prev < nudgeUs)
+			break;
+		if (m_lastBeginFrameUs.compare_exchange_weak(prev, now, std::memory_order_relaxed))
 		{
-			if (now - prev < nudgeUs)
-				break;
-			if (m_lastBeginFrameUs.compare_exchange_weak(prev, now, std::memory_order_relaxed))
-			{
-				CefRefPtr<CefBrowser> b = m_browser;
-				if (b) b->GetHost()->SendExternalBeginFrame();
-				break;
-			}
+			CefRefPtr<CefBrowser> b = m_browser;
+			if (b)
+				b->GetHost()->SendExternalBeginFrame();
+			break;
 		}
-	};
-	while (processedEvents < kMaxEventsPerPump && m_inputBuffer.ReadEvent(evt))
+	}
+}
+
+bool OsrHandler::DispatchInputEvent(CefRefPtr<CefBrowserHost> host, const InputEvent& evt)
+{
+	switch (evt.type)
 	{
-		++processedEvents;
-		if (!m_inputEnabled) continue;
-		switch (evt.type)
-		{
 		case InputEventType::MouseMove:
 		{
-			CefMouseEvent e; e.x = evt.mouse.x; e.y = evt.mouse.y;
+			CefMouseEvent e;
+			e.x = evt.mouse.x;
+			e.y = evt.mouse.y;
 			e.modifiers = m_mouseModifiers;
 			host->SendMouseMoveEvent(e, false);
-			shouldNudgeFrame = true;
-			break;
+			return true;
 		}
 		case InputEventType::MouseDown:
 		case InputEventType::MouseUp:
 		{
 			auto btn = static_cast<CefBrowserHost::MouseButtonType>(evt.mouse.button);
 			bool isUp = evt.type == InputEventType::MouseUp;
-			uint32_t flag = (btn == MBT_LEFT)   ? EVENTFLAG_LEFT_MOUSE_BUTTON
-			              : (btn == MBT_MIDDLE)  ? EVENTFLAG_MIDDLE_MOUSE_BUTTON
-			                                     : EVENTFLAG_RIGHT_MOUSE_BUTTON;
-			if (isUp) m_mouseModifiers &= ~flag;
-			else      m_mouseModifiers |= flag;
-			CefMouseEvent e; e.x = evt.mouse.x; e.y = evt.mouse.y;
+			uint32_t flag = (btn == MBT_LEFT) ? EVENTFLAG_LEFT_MOUSE_BUTTON
+				: (btn == MBT_MIDDLE)		  ? EVENTFLAG_MIDDLE_MOUSE_BUTTON
+											  : EVENTFLAG_RIGHT_MOUSE_BUTTON;
+			if (isUp)
+				m_mouseModifiers &= ~flag;
+			else
+				m_mouseModifiers |= flag;
+			CefMouseEvent e;
+			e.x = evt.mouse.x;
+			e.y = evt.mouse.y;
 			e.modifiers = m_mouseModifiers;
 			host->SendMouseClickEvent(e, btn, isUp, 1);
-			shouldNudgeFrame = true;
-			break;
+			return true;
 		}
 		case InputEventType::MouseScroll:
 		{
-			CefMouseEvent e; e.x = evt.scroll.x; e.y = evt.scroll.y;
+			CefMouseEvent e;
+			e.x = evt.scroll.x;
+			e.y = evt.scroll.y;
 			host->SendMouseWheelEvent(e,
 				static_cast<int>(evt.scroll.delta_x),
 				static_cast<int>(evt.scroll.delta_y));
-			shouldNudgeFrame = true;
-			break;
+			return true;
 		}
 		case InputEventType::KeyDown:
 		case InputEventType::KeyUp:
@@ -1306,8 +1353,7 @@ void OsrHandler::PumpInput()
 			e.windows_key_code = static_cast<int>(evt.key.windows_key_code);
 			e.modifiers = evt.key.modifiers;
 			host->SendKeyEvent(e);
-			shouldNudgeFrame = true;
-			break;
+			return true;
 		}
 		case InputEventType::KeyChar:
 		{
@@ -1315,67 +1361,120 @@ void OsrHandler::PumpInput()
 			e.type = KEYEVENT_CHAR;
 			e.windows_key_code = evt.char_event.character;
 			host->SendKeyEvent(e);
-			shouldNudgeFrame = true;
-			break;
+			return true;
 		}
-		}
+		default:
+			return false;
+	}
+}
+
+void OsrHandler::PumpInput()
+{
+	CefRefPtr<CefBrowser> browser = m_browser;
+	if (!browser)
+		return;
+	CefRefPtr<CefBrowserHost> host = browser->GetHost();
+	InputEvent evt;
+	bool shouldNudgeFrame = false;
+	uint32_t processedEvents = 0;
+	constexpr uint32_t kMaxEventsPerPump = 64;
+	constexpr uint32_t kNudgeEveryEvents = 8;
+	while (processedEvents < kMaxEventsPerPump && m_inputBuffer.ReadEvent(evt))
+	{
+		++processedEvents;
+		if (!m_inputEnabled)
+			continue;
+		shouldNudgeFrame = DispatchInputEvent(host, evt) || shouldNudgeFrame;
 
 		if (shouldNudgeFrame && (processedEvents % kNudgeEveryEvents) == 0)
 		{
-			tryInputNudge();
+			TryInputNudgeFrame();
 			shouldNudgeFrame = false;
 		}
 	}
 
 	if (shouldNudgeFrame)
 	{
-		tryInputNudge();
+		TryInputNudgeFrame();
 	}
 }
 
-void OsrHandler::PumpControl()
+void OsrHandler::HandleControlSetFrameRate(CefRefPtr<CefBrowserHost> host, uint32_t requestedFps)
 {
-	CefRefPtr<CefBrowser> browser = m_browser;
-	if (!browser) return;
-	CefRefPtr<CefBrowserHost> host = browser->GetHost();
+	const uint32_t applied = (requestedFps == 0) ? 60u : (requestedFps > 240u ? 240u : requestedFps);
+	host->SetWindowlessFrameRate(static_cast<int>(applied));
+	UpdateBeginFrameIntervalFromFps(applied);
+}
 
-	ControlEvent evt;
-	while (m_controlBuffer.ReadEvent(evt))
+void OsrHandler::HandleControlSetMaxInFlightBeginFrames(uint32_t requestedMaxInFlight)
+{
+	const uint32_t applied = (requestedMaxInFlight == 0u) ? 2u : requestedMaxInFlight;
+	m_maxInFlightBeginFrames.store(applied, std::memory_order_relaxed);
+	// Drop historical debt from previous unlimited mode so cap can stabilize immediately.
+	const uint64_t sentNow = m_beginFramesSent.load(std::memory_order_relaxed);
+	m_paintsCompleted.store(sentNow, std::memory_order_relaxed);
+}
+
+void OsrHandler::HandleControlLoadHtmlString(CefRefPtr<CefBrowser> browser, const char16_t* html)
+{
+	const CefString encoded = CefURIEncode(CefString(html), false);
+	const std::u16string dataUrl = std::u16string(u"data:text/html;charset=utf-8,") + encoded.ToString16();
+	browser->GetMainFrame()->LoadURL(CefString(dataUrl));
+}
+
+void OsrHandler::HandleControlScrollTo(CefRefPtr<CefBrowser> browser, int32_t x, int32_t y)
+{
+	browser->GetMainFrame()->ExecuteJavaScript(
+		CefString("window.scrollTo(" + std::to_string(x) + "," + std::to_string(y) + ")"), CefString(), 0);
+}
+
+void OsrHandler::HandleControlOpenDevTools(CefRefPtr<CefBrowserHost> host)
+{
+	CefWindowInfo wi;
+	wi.SetAsPopup(nullptr, "DevTools");
+	host->ShowDevTools(wi, nullptr, CefBrowserSettings(), CefPoint());
+}
+
+void OsrHandler::HandleControlEvent(CefRefPtr<CefBrowser> browser, CefRefPtr<CefBrowserHost> host, const ControlEvent& evt)
+{
+	switch (evt.type)
 	{
-		switch (evt.type)
-		{
-		case ControlEventType::GoBack:      browser->GoBack();    break;
-		case ControlEventType::GoForward:   browser->GoForward(); break;
-		case ControlEventType::StopLoad:    browser->StopLoad();  break;
-		case ControlEventType::Reload:      browser->Reload();    break;
+		case ControlEventType::GoBack:
+			browser->GoBack();
+			break;
+		case ControlEventType::GoForward:
+			browser->GoForward();
+			break;
+		case ControlEventType::StopLoad:
+			browser->StopLoad();
+			break;
+		case ControlEventType::Reload:
+			browser->Reload();
+			break;
 		case ControlEventType::SetURL:
-			browser->GetMainFrame()->LoadURL(CefString(evt.string.text)); break;
-		case ControlEventType::SetPaused:    m_paused = evt.flag.value; break;
-		case ControlEventType::SetHidden:    host->WasHidden(evt.flag.value); break;
-		case ControlEventType::SetFocus:     host->SetFocus(evt.flag.value); break;
+			browser->GetMainFrame()->LoadURL(CefString(evt.string.text));
+			break;
+		case ControlEventType::SetPaused:
+			m_paused = evt.flag.value;
+			break;
+		case ControlEventType::SetHidden:
+			host->WasHidden(evt.flag.value);
+			break;
+		case ControlEventType::SetFocus:
+			host->SetFocus(evt.flag.value);
+			break;
 		case ControlEventType::SetZoomLevel:
-			host->SetZoomLevel(static_cast<double>(evt.zoom.value)); break;
+			host->SetZoomLevel(static_cast<double>(evt.zoom.value));
+			break;
 		case ControlEventType::SetFrameRate:
-		{
-			const uint32_t requested = evt.frame_rate.value;
-			const uint32_t applied = (requested == 0) ? 60u : (requested > 240u ? 240u : requested);
-			host->SetWindowlessFrameRate(static_cast<int>(applied));
-			UpdateBeginFrameIntervalFromFps(applied);
-		}
+			HandleControlSetFrameRate(host, evt.frame_rate.value);
 			break;
 		case ControlEventType::SetConsumerCadenceUs:
 			// Intentionally ignored for now: cadence feedback is gated while tuning is experimental.
 			(void)evt;
 			break;
 		case ControlEventType::SetMaxInFlightBeginFrames:
-		{
-			const uint32_t requested = evt.frame_rate.value;
-			const uint32_t applied = (requested == 0u) ? 2u : requested;
-			m_maxInFlightBeginFrames.store(applied, std::memory_order_relaxed);
-			// Drop historical debt from previous unlimited mode so cap can stabilize immediately.
-			const uint64_t sentNow = m_beginFramesSent.load(std::memory_order_relaxed);
-			m_paintsCompleted.store(sentNow, std::memory_order_relaxed);
-		}
+			HandleControlSetMaxInFlightBeginFrames(evt.frame_rate.value);
 			break;
 		case ControlEventType::SetFlushIntervalFrames:
 			m_flushIntervalFrames.store(evt.frame_rate.value, std::memory_order_relaxed);
@@ -1387,35 +1486,47 @@ void OsrHandler::PumpControl()
 			browser->GetMainFrame()->LoadURL(MakeFileUrlFromPath(CefString(evt.string.text)));
 			break;
 		case ControlEventType::LoadHtmlString:
-		{
-			const CefString encoded = CefURIEncode(CefString(evt.string.text), false);
-			const std::u16string dataUrl = std::u16string(u"data:text/html;charset=utf-8,") + encoded.ToString16();
-			browser->GetMainFrame()->LoadURL(CefString(dataUrl));
-		}
+			HandleControlLoadHtmlString(browser, evt.string.text);
 			break;
 		case ControlEventType::ScrollTo:
-			browser->GetMainFrame()->ExecuteJavaScript(
-				CefString("window.scrollTo(" + std::to_string(evt.scroll.x) + "," +
-					std::to_string(evt.scroll.y) + ")"), CefString(), 0);
+			HandleControlScrollTo(browser, evt.scroll.x, evt.scroll.y);
 			break;
 		case ControlEventType::Resize:
-			Resize(evt.resize.width, evt.resize.height); break;
+			Resize(evt.resize.width, evt.resize.height);
+			break;
 		case ControlEventType::SetMuted:
-			host->SetAudioMuted(evt.flag.value); break;
+			host->SetAudioMuted(evt.flag.value);
+			break;
 		case ControlEventType::OpenDevTools:
-		{
-			CefWindowInfo wi; wi.SetAsPopup(nullptr, "DevTools");
-			host->ShowDevTools(wi, nullptr, CefBrowserSettings(), CefPoint());
-		}
-		break;
-		case ControlEventType::CloseDevTools:   host->CloseDevTools(); break;
-		case ControlEventType::SetInputEnabled: m_inputEnabled = evt.flag.value; break;
+			HandleControlOpenDevTools(host);
+			break;
+		case ControlEventType::CloseDevTools:
+			host->CloseDevTools();
+			break;
+		case ControlEventType::SetInputEnabled:
+			m_inputEnabled = evt.flag.value;
+			break;
 		case ControlEventType::ExecuteJS:
 			browser->GetMainFrame()->ExecuteJavaScript(
-				CefString(evt.string.text), CefString(), 0); break;
+				CefString(evt.string.text), CefString(), 0);
+			break;
 		case ControlEventType::ClearCookies:
 			CefCookieManager::GetGlobalManager(nullptr)->DeleteCookies(
-				CefString(), CefString(), nullptr); break;
-		}
+				CefString(), CefString(), nullptr);
+			break;
+	}
+}
+
+void OsrHandler::PumpControl()
+{
+	CefRefPtr<CefBrowser> browser = m_browser;
+	if (!browser)
+		return;
+	CefRefPtr<CefBrowserHost> host = browser->GetHost();
+
+	ControlEvent evt;
+	while (m_controlBuffer.ReadEvent(evt))
+	{
+		HandleControlEvent(browser, host, evt);
 	}
 }

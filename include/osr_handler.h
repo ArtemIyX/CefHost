@@ -52,26 +52,26 @@ public:
 	/** @brief Notifies main-frame load completion. */
 	void OnLoadEnd(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, int http_status_code) override;
 	/** @brief Notifies main-frame load failure. */
-	void OnLoadError(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, ErrorCode error_code, const CefString &error_text, const CefString &failed_url) override;
+	void OnLoadError(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, ErrorCode error_code, const CefString& error_text, const CefString& failed_url) override;
 
 	/** @brief Publishes cursor type changes to shared frame header. */
 	bool OnCursorChange(CefRefPtr<CefBrowser> browser, CefCursorHandle cursor,
-						cef_cursor_type_t type, const CefCursorInfo &custom_cursor_info) override;
+		cef_cursor_type_t type, const CefCursorInfo& custom_cursor_info) override;
 
 	/** @brief Removes default context-menu entries. */
 	void OnBeforeContextMenu(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
-							 CefRefPtr<CefContextMenuParams> params, CefRefPtr<CefMenuModel> model) override;
+		CefRefPtr<CefContextMenuParams> params, CefRefPtr<CefMenuModel> model) override;
 
 	/** @brief Tracks popup visibility to control popup composition path. */
 	void OnPopupShow(CefRefPtr<CefBrowser> browser, bool show) override;
 	/** @brief Updates popup rectangle used for composition/publish. */
-	void OnPopupSize(CefRefPtr<CefBrowser> browser, const CefRect &rect) override;
+	void OnPopupSize(CefRefPtr<CefBrowser> browser, const CefRect& rect) override;
 	/** @brief Forwards JS console events into shared console ring. */
 	bool OnConsoleMessage(CefRefPtr<CefBrowser> browser, cef_log_severity_t level,
-						  const CefString &message, const CefString &source, int line) override;
+		const CefString& message, const CefString& source, int line) override;
 
 	/** @brief Provides current CEF view rectangle. */
-	void GetViewRect(CefRefPtr<CefBrowser> browser, CefRect &rect) override;
+	void GetViewRect(CefRefPtr<CefBrowser> browser, CefRect& rect) override;
 
 	/**
 	 * @brief Handles accelerated paint callbacks using shared GPU textures.
@@ -81,11 +81,11 @@ public:
 	 * @param info Shared-handle metadata for source texture.
 	 */
 	void OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
-							const RectList &dirtyRects, const CefAcceleratedPaintInfo &info) override;
+		const RectList& dirtyRects, const CefAcceleratedPaintInfo& info) override;
 
 	/** @brief Software paint path is unused (GPU path only). */
 	void OnPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
-				 const RectList &dirty_rects, const void *buffer, int width, int height) override
+		const RectList& dirty_rects, const void* buffer, int width, int height) override
 	{
 	}
 
@@ -112,13 +112,21 @@ public:
 private:
 	void PumpInput();
 	void PumpControl();
+	void TryInputNudgeFrame();
+	bool DispatchInputEvent(CefRefPtr<CefBrowserHost> host, const InputEvent& evt);
+	void HandleControlEvent(CefRefPtr<CefBrowser> browser, CefRefPtr<CefBrowserHost> host, const ControlEvent& evt);
+	void HandleControlSetFrameRate(CefRefPtr<CefBrowserHost> host, uint32_t requestedFps);
+	void HandleControlSetMaxInFlightBeginFrames(uint32_t requestedMaxInFlight);
+	void HandleControlLoadHtmlString(CefRefPtr<CefBrowser> browser, const char16_t* html);
+	void HandleControlScrollTo(CefRefPtr<CefBrowser> browser, int32_t x, int32_t y);
+	void HandleControlOpenDevTools(CefRefPtr<CefBrowserHost> host);
 	void TrySendBeginFrame();
 	void TryIdleRepairInvalidate();
 	void UpdateBeginFrameIntervalFromFps(uint32_t fps);
 	void UpdateBeginFrameIntervalFromConsumerCadenceUs(uint32_t cadenceUs);
 	void StartRenderLoop();
 	void StopRenderLoop();
-	bool EnsureSharedTextures(uint32_t width, uint32_t height, bool *outRecreated = nullptr);
+	bool EnsureSharedTextures(uint32_t width, uint32_t height, bool* outRecreated = nullptr);
 
 	uint32_t m_width;
 	uint32_t m_height;
@@ -130,53 +138,53 @@ private:
 	std::thread m_renderThread;
 	std::thread m_inputThread;
 	std::thread m_controlThread;
-	std::atomic<bool> m_running{false};
-	std::atomic<bool> m_inputEnabled{true};
-	uint32_t m_mouseModifiers{0};
-	std::atomic<bool> m_paused{false};
-	std::atomic<uint64_t> m_lastBeginFrameUs{0};
-	std::atomic<uint64_t> m_beginFrameIntervalNs{16666667ULL};
-	std::atomic<uint32_t> m_smoothedConsumerCadenceUs{0};
-	std::atomic<bool> m_forceFullFrame{true};
-	bool m_enableThreadTuning{true};
-	bool m_enableCadenceFeedback{false};
-	std::atomic<uint64_t> m_lastTelemetryLogUs{0};
-	std::atomic<uint64_t> m_lastPaintUs{0};
-	std::atomic<uint64_t> m_statProducedFrames{0};
-	std::atomic<uint64_t> m_statForcedFullFrames{0};
-	std::atomic<uint64_t> m_statForcedFullManual{0};
-	std::atomic<uint64_t> m_statForcedFullRecreate{0};
-	std::atomic<uint64_t> m_statForcedFullOverflow{0};
-	std::atomic<uint64_t> m_statDirtyRectCountSum{0};
-	std::atomic<uint64_t> m_statDirtyRectAreaSum{0};
-	std::atomic<uint64_t> m_statCopySubmitUsSum{0};
-	std::atomic<uint64_t> m_statCopySubmitUsMax{0};
-	std::atomic<uint64_t> m_statBeginFramesSentWindow{0};
-	std::atomic<uint64_t> m_statBeginToPaintUsSum{0};
-	std::atomic<uint64_t> m_statBeginToPaintUsMax{0};
-	std::atomic<uint64_t> m_statSchedMissCount{0};
-	std::atomic<uint64_t> m_statSchedLateUsSum{0};
-	std::atomic<uint64_t> m_statSchedLateUsMax{0};
-	std::atomic<uint64_t> m_lastPublishUs{0};
-	std::atomic<uint64_t> m_lastDirtyPublishUs{0};
-	std::atomic<uint64_t> m_lastRepairInvalidateUs{0};
-	std::atomic<bool> m_waitingIdleRepair{false};
-	std::atomic<uint64_t> m_beginFramesSent{0};
-	std::atomic<uint64_t> m_paintsCompleted{0};
-	uint64_t m_framesSinceFlush{0};
-	uint64_t m_nextFrameId{1};
-	uint64_t m_nextGpuFenceValue{1};
-	uint32_t m_keyframeInterval{0};
-	std::atomic<uint64_t> m_keyframeIntervalUs{0ULL};
-	uint64_t m_lastKeyframeUs{0};
-	std::atomic<uint32_t> m_maxInFlightBeginFrames{2};
-	uint32_t m_warmupFullFrames{3};
-	std::atomic<uint32_t> m_flushIntervalFrames{1};
-	bool m_timerPeriodRaised{false};
+	std::atomic<bool> m_running{ false };
+	std::atomic<bool> m_inputEnabled{ true };
+	uint32_t m_mouseModifiers{ 0 };
+	std::atomic<bool> m_paused{ false };
+	std::atomic<uint64_t> m_lastBeginFrameUs{ 0 };
+	std::atomic<uint64_t> m_beginFrameIntervalNs{ 16666667ULL };
+	std::atomic<uint32_t> m_smoothedConsumerCadenceUs{ 0 };
+	std::atomic<bool> m_forceFullFrame{ true };
+	bool m_enableThreadTuning{ true };
+	bool m_enableCadenceFeedback{ false };
+	std::atomic<uint64_t> m_lastTelemetryLogUs{ 0 };
+	std::atomic<uint64_t> m_lastPaintUs{ 0 };
+	std::atomic<uint64_t> m_statProducedFrames{ 0 };
+	std::atomic<uint64_t> m_statForcedFullFrames{ 0 };
+	std::atomic<uint64_t> m_statForcedFullManual{ 0 };
+	std::atomic<uint64_t> m_statForcedFullRecreate{ 0 };
+	std::atomic<uint64_t> m_statForcedFullOverflow{ 0 };
+	std::atomic<uint64_t> m_statDirtyRectCountSum{ 0 };
+	std::atomic<uint64_t> m_statDirtyRectAreaSum{ 0 };
+	std::atomic<uint64_t> m_statCopySubmitUsSum{ 0 };
+	std::atomic<uint64_t> m_statCopySubmitUsMax{ 0 };
+	std::atomic<uint64_t> m_statBeginFramesSentWindow{ 0 };
+	std::atomic<uint64_t> m_statBeginToPaintUsSum{ 0 };
+	std::atomic<uint64_t> m_statBeginToPaintUsMax{ 0 };
+	std::atomic<uint64_t> m_statSchedMissCount{ 0 };
+	std::atomic<uint64_t> m_statSchedLateUsSum{ 0 };
+	std::atomic<uint64_t> m_statSchedLateUsMax{ 0 };
+	std::atomic<uint64_t> m_lastPublishUs{ 0 };
+	std::atomic<uint64_t> m_lastDirtyPublishUs{ 0 };
+	std::atomic<uint64_t> m_lastRepairInvalidateUs{ 0 };
+	std::atomic<bool> m_waitingIdleRepair{ false };
+	std::atomic<uint64_t> m_beginFramesSent{ 0 };
+	std::atomic<uint64_t> m_paintsCompleted{ 0 };
+	uint64_t m_framesSinceFlush{ 0 };
+	uint64_t m_nextFrameId{ 1 };
+	uint64_t m_nextGpuFenceValue{ 1 };
+	uint32_t m_keyframeInterval{ 0 };
+	std::atomic<uint64_t> m_keyframeIntervalUs{ 0ULL };
+	uint64_t m_lastKeyframeUs{ 0 };
+	std::atomic<uint32_t> m_maxInFlightBeginFrames{ 2 };
+	uint32_t m_warmupFullFrames{ 3 };
+	std::atomic<uint32_t> m_flushIntervalFrames{ 1 };
+	bool m_timerPeriodRaised{ false };
 
 	CefRect m_popupRect;
 	CefRect m_popupClearRect; // area to refresh from cefTexture after popup hides
-	std::atomic<bool> m_popupVisible{false};
+	std::atomic<bool> m_popupVisible{ false };
 
 	// Popup GPU texture
 	ComPtr<ID3D11Texture2D> m_popupTexture;

@@ -455,3 +455,21 @@ YYYY-MM-DD HH:MM
 
 ### Impact
 - Better interactive responsiveness under continuous input while keeping frame request throttling bounded.
+
+---
+
+## 2026-04-20 13:22
+
+### Changed
+- Refactored input/control event handling in OsrHandler into smaller helpers:
+  - input: TryInputNudgeFrame, DispatchInputEvent
+  - control: HandleControlEvent + focused per-command helpers
+- Kept PumpInput and PumpControl as thin orchestrators.
+
+### Why
+- Reduce method size and branch density in hot paths.
+- Make behavior easier to read, test, and modify safely.
+
+### Impact
+- No protocol/runtime behavior changes intended.
+- Build remains green after refactor.
