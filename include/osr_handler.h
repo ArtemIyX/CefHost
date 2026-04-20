@@ -120,6 +120,12 @@ private:
 	void HandleControlLoadHtmlString(CefRefPtr<CefBrowser> browser, const char16_t* html);
 	void HandleControlScrollTo(CefRefPtr<CefBrowser> browser, int32_t x, int32_t y);
 	void HandleControlOpenDevTools(CefRefPtr<CefBrowserHost> host);
+	bool InitSharedChannels();
+	bool InitD3DInterfaces();
+	void InitFrameHeaderDefaults();
+	void ReleaseSharedTextureResources();
+	void ReleaseD3DResources();
+	void ShutdownSharedChannels();
 	void RenderThreadMain();
 	void InputThreadMain();
 	void ControlThreadMain();

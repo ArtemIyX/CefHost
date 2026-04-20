@@ -242,7 +242,7 @@ OsrHandler::OsrHandler(uint32_t width, uint32_t height, uint32_t targetFps)
 	UpdateBeginFrameIntervalFromFps(targetFps);
 }
 
-bool OsrHandler::Init()
+bool OsrHandler::InitSharedChannels()
 {
 	if (!m_frameBuffer.Init())
 		return false;
@@ -252,7 +252,11 @@ bool OsrHandler::Init()
 		return false;
 	if (!m_consoleBuffer.Init())
 		return false;
+	return true;
+}
 
+bool OsrHandler::InitD3DInterfaces()
+{
 	HRESULT hr = g_D3D11Device.GetDevice()->QueryInterface(IID_PPV_ARGS(&m_device1));
 	if (FAILED(hr))
 	{
@@ -292,49 +296,51 @@ bool OsrHandler::Init()
 		}
 	}
 
-	FrameHeader* header = m_frameBuffer.GetHeader();
-	if (header)
-	{
-		header->protocol_magic = SHM_PROTOCOL_MAGIC;
-		header->version = SHM_PROTOCOL_VERSION;
-		header->slot_count = BUFFER_COUNT;
-		header->write_slot = 0;
-		header->sequence = 0;
-		header->frame_id = 0;
-		header->present_id = 0;
-		header->gpu_fence_value = 0;
-		header->flags = FRAME_FLAG_FULL_FRAME;
-		header->popup_visible = 0;
-		header->popup_rect = { 0, 0, 0, 0 };
-		header->dirty_count = 0;
-	}
-
 	return true;
 }
 
-void OsrHandler::Shutdown()
+void OsrHandler::InitFrameHeaderDefaults()
 {
-	StopRenderLoop();
+	FrameHeader* header = m_frameBuffer.GetHeader();
+	if (!header)
+		return;
 
+	header->protocol_magic = SHM_PROTOCOL_MAGIC;
+	header->version = SHM_PROTOCOL_VERSION;
+	header->slot_count = BUFFER_COUNT;
+	header->write_slot = 0;
+	header->sequence = 0;
+	header->frame_id = 0;
+	header->present_id = 0;
+	header->gpu_fence_value = 0;
+	header->flags = FRAME_FLAG_FULL_FRAME;
+	header->popup_visible = 0;
+	header->popup_rect = { 0, 0, 0, 0 };
+	header->dirty_count = 0;
+}
+
+void OsrHandler::ReleaseSharedTextureResources()
+{
+	std::lock_guard<std::mutex> lock(m_textureMutex);
+	for (uint32_t i = 0; i < BUFFER_COUNT; ++i)
 	{
-		std::lock_guard<std::mutex> lock(m_textureMutex);
-		for (uint32_t i = 0; i < BUFFER_COUNT; ++i)
+		if (m_sharedNTHandle[i])
 		{
-			if (m_sharedNTHandle[i])
-			{
-				CloseHandle(m_sharedNTHandle[i]);
-				m_sharedNTHandle[i] = nullptr;
-			}
-			m_sharedTexture[i].Reset();
+			CloseHandle(m_sharedNTHandle[i]);
+			m_sharedNTHandle[i] = nullptr;
 		}
-		if (m_sharedPopupHandle)
-		{
-			CloseHandle(m_sharedPopupHandle);
-			m_sharedPopupHandle = nullptr;
-		}
-		m_sharedPopupTexture.Reset();
+		m_sharedTexture[i].Reset();
 	}
+	if (m_sharedPopupHandle)
+	{
+		CloseHandle(m_sharedPopupHandle);
+		m_sharedPopupHandle = nullptr;
+	}
+	m_sharedPopupTexture.Reset();
+}
 
+void OsrHandler::ReleaseD3DResources()
+{
 	m_cachedTextureView.Reset();
 	m_cachedHandleView = nullptr;
 	m_cachedTexturePopup.Reset();
@@ -347,11 +353,33 @@ void OsrHandler::Shutdown()
 	m_sharedFence.Reset();
 	m_context4.Reset();
 	m_device5.Reset();
+	m_device1.Reset();
+}
 
+void OsrHandler::ShutdownSharedChannels()
+{
 	m_frameBuffer.Shutdown();
 	m_inputBuffer.Shutdown();
 	m_controlBuffer.Shutdown();
 	m_consoleBuffer.Shutdown();
+}
+
+bool OsrHandler::Init()
+{
+	if (!InitSharedChannels())
+		return false;
+	if (!InitD3DInterfaces())
+		return false;
+	InitFrameHeaderDefaults();
+	return true;
+}
+
+void OsrHandler::Shutdown()
+{
+	StopRenderLoop();
+	ReleaseSharedTextureResources();
+	ReleaseD3DResources();
+	ShutdownSharedChannels();
 }
 
 bool OsrHandler::EnsureSharedTextures(uint32_t width, uint32_t height, bool* outRecreated)
