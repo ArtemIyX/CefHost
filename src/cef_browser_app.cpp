@@ -8,9 +8,11 @@ void CefHostBrowserApp::OnBeforeCommandLineProcessing(const CefString& process_t
     if (!command_line)
         return;
 
+    // Keep compositor cadence stable in headless/windowless mode.
     command_line->AppendSwitch("disable-background-timer-throttling");
     command_line->AppendSwitch("disable-renderer-backgrounding");
     command_line->AppendSwitch("disable-backgrounding-occluded-windows");
+    // Prevent native occlusion heuristics from pausing rendering when no HWND is shown.
     command_line->AppendSwitchWithValue("disable-features", "CalculateNativeWinOcclusion");
 }
 

@@ -3,10 +3,16 @@
 #include <Windows.h>
 #include <cstring>
 
-// Shared ring buffer for input events sent from consumer to host.
+/**
+ * @brief Shared input-event ring read by host process.
+ */
 class SharedInputBuffer
 {
 public:
+    /**
+     * @brief Creates/opens input ring mapping and ready event.
+     * @return true when initialization succeeded.
+     */
     bool Init()
     {
         m_hMap = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr,
@@ -28,7 +34,11 @@ public:
         return true;
     }
 
-    // Returns false if ring is empty.
+    /**
+     * @brief Pops one input event from ring.
+     * @param out_event Output event when available.
+     * @return false when ring is empty or not initialized.
+     */
     bool ReadEvent(InputEvent& out_event)
     {
         if (!m_pRing) return false;
@@ -42,6 +52,7 @@ public:
         return true;
     }
 
+    /** @brief Checks if ring contains unread events. */
     bool HasPendingEvents() const
     {
         if (!m_pRing) return false;
@@ -49,8 +60,10 @@ public:
                m_pRing->write_index.load(std::memory_order_acquire);
     }
 
+    /** @brief Returns input-ready event handle. */
     HANDLE GetEvent() const { return m_hEvent; }
 
+    /** @brief Releases mapping and event handles. */
     void Shutdown()
     {
         if (m_pRing) { UnmapViewOfFile(m_pRing);  m_pRing = nullptr; }

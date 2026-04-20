@@ -3,10 +3,16 @@
 #include <Windows.h>
 #include <atomic>
 
-// Shared ring buffer for JS console logs sent from host to UE consumer.
+/**
+ * @brief Shared console-log ring written by host and read by consumer.
+ */
 class SharedConsoleBuffer
 {
 public:
+	/**
+	 * @brief Creates/opens console ring mapping and ready event.
+	 * @return true when initialization succeeded.
+	 */
 	bool Init()
 	{
 		m_hMap = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr,
@@ -27,6 +33,10 @@ public:
 		return true;
 	}
 
+	/**
+	 * @brief Pushes one console event to ring and signals consumer.
+	 * @param inEvent Console payload to store.
+	 */
 	void WriteEvent(const ConsoleLogEvent& inEvent)
 	{
 		if (!m_pRing || !m_hEvent) return;
@@ -45,8 +55,10 @@ public:
 		SetEvent(m_hEvent);
 	}
 
+	/** @brief Returns console-ready event handle. */
 	HANDLE GetEvent() const { return m_hEvent; }
 
+	/** @brief Releases mapping and event handles. */
 	void Shutdown()
 	{
 		if (m_pRing) { UnmapViewOfFile(m_pRing);  m_pRing = nullptr; }

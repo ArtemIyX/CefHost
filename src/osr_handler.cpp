@@ -1202,6 +1202,7 @@ void OsrHandler::OnAfterCreated(CefRefPtr<CefBrowser> browser)
 	m_browser = browser;
 	CefRefPtr<CefBrowserHost> host = browser->GetHost();
 	host->SetFocus(true);
+	// Align CEF internal pacing with producer pacing to avoid drift at startup.
 	UpdateBeginFrameIntervalFromFps(60u);
 	host->SetWindowlessFrameRate(60);
 	StartRenderLoop();
@@ -1363,6 +1364,7 @@ void OsrHandler::PumpControl()
 		}
 			break;
 		case ControlEventType::SetConsumerCadenceUs:
+			// Intentionally ignored for now: cadence feedback is gated while tuning is experimental.
 			(void)evt;
 			break;
 		case ControlEventType::SetMaxInFlightBeginFrames:

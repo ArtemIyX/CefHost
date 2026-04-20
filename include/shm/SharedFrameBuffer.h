@@ -4,10 +4,19 @@
 #include <cstring>
 #include <atomic>
 
-// Shared frame metadata + event handle used by producer/consumer processes.
+/**
+ * @brief Shared frame-metadata region and ready-event owner.
+ *
+ * Producer writes FrameHeader metadata (and optional CPU pixel payload) and
+ * signals EVT_FRAME_READY to notify consumer.
+ */
 class SharedFrameBuffer
 {
 public:
+    /**
+     * @brief Creates/opens shared frame mapping and ready event.
+     * @return true when mapping and event are available.
+     */
     bool Init()
     {
         m_hMap = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr,
@@ -24,6 +33,13 @@ public:
         return true;
     }
 
+    /**
+     * @brief Writes a CPU BGRA frame into ring slot and publishes metadata.
+     * @param width Frame width.
+     * @param height Frame height.
+     * @param bgra_data Pixel source pointer.
+     * @param data_size Source size in bytes.
+     */
     void WriteFrame(uint32_t width, uint32_t height, const void* bgra_data, size_t data_size)
     {
         if (!m_pData) return;
@@ -55,6 +71,7 @@ public:
         SetEvent(m_hEvent);
     }
 
+    /** @brief Releases mapping and event handles. */
     void Shutdown()
     {
         if (m_pData) { UnmapViewOfFile(m_pData);  m_pData = nullptr; }
@@ -64,10 +81,12 @@ public:
 
     ~SharedFrameBuffer() { Shutdown(); }
 
+    /** @brief Returns mapped frame header pointer. */
     FrameHeader* GetHeader() const
     {
         return reinterpret_cast<FrameHeader*>(m_pData);
     }
+    /** @brief Returns frame-ready event handle. */
     HANDLE GetEvent() const {return m_hEvent;}
 private:
     HANDLE m_hMap = nullptr;

@@ -7,9 +7,16 @@
 
 using Microsoft::WRL::ComPtr;
 
+/**
+ * @brief Thin owner for process-wide D3D11 device/context/factory objects.
+ */
 class D3D11Device
 {
 public:
+	/**
+	 * @brief Creates D3D11 device and related DXGI interfaces.
+	 * @return true if all required interfaces were created.
+	 */
 	bool Init()
 	{
 		UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
@@ -26,8 +33,7 @@ public:
 			D3D11_SDK_VERSION,
 			&m_device,
 			&featureLevel,
-			&m_context
-		);
+			&m_context);
 
 		if (FAILED(hr))
 		{
@@ -69,13 +75,16 @@ public:
 		m_device.Reset();
 	}
 
-	ID3D11Device* GetDevice()      const { return m_device.Get(); }
-	ID3D11DeviceContext* GetContext()     const { return m_context.Get(); }
-	IDXGIFactory2* GetDXGIFactory() const { return m_dxgiFactory.Get(); }
+	/** @brief Returns raw ID3D11Device pointer. */
+	ID3D11Device *GetDevice() const { return m_device.Get(); }
+	/** @brief Returns raw immediate context pointer. */
+	ID3D11DeviceContext *GetContext() const { return m_context.Get(); }
+	/** @brief Returns raw DXGI factory pointer. */
+	IDXGIFactory2 *GetDXGIFactory() const { return m_dxgiFactory.Get(); }
 
 private:
-	ComPtr<ID3D11Device>        m_device;
+	ComPtr<ID3D11Device> m_device;
 	ComPtr<ID3D11DeviceContext> m_context;
-	ComPtr<IDXGIDevice>         m_dxgiDevice;
-	ComPtr<IDXGIFactory2>       m_dxgiFactory;
+	ComPtr<IDXGIDevice> m_dxgiDevice;
+	ComPtr<IDXGIFactory2> m_dxgiFactory;
 };

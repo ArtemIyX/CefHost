@@ -36,6 +36,7 @@ int main(int argc, char* argv[])
 
 
 
+    // Raise system timer granularity so begin-frame pacing has lower jitter.
     timeBeginPeriod(1);
 
     CefSettings settings;
@@ -46,6 +47,7 @@ int main(int argc, char* argv[])
     CefRunMessageLoop();
     CefShutdown();
 
+    // Must symmetrically restore timer granularity before process exit.
     timeEndPeriod(1);
 
     g_D3D11Device.Shutdown();
