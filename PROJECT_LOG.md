@@ -473,3 +473,22 @@ YYYY-MM-DD HH:MM
 ### Impact
 - No protocol/runtime behavior changes intended.
 - Build remains green after refactor.
+
+---
+
+## 2026-04-20 13:25
+
+### Changed
+- Refactored render loop startup by extracting thread bodies from StartRenderLoop into:
+  - RenderThreadMain
+  - InputThreadMain
+  - ControlThreadMain
+- Reduced StartRenderLoop to thread orchestration only.
+
+### Why
+- Separate scheduling logic from setup code.
+- Make each thread path easier to read/debug in isolation.
+
+### Impact
+- No intentional behavior change.
+- Build remains green after refactor.

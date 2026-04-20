@@ -950,67 +950,53 @@ void OsrHandler::UpdateBeginFrameIntervalFromConsumerCadenceUs(uint32_t cadenceU
 	m_beginFrameIntervalNs.store(targetUs * 1000ULL, std::memory_order_relaxed);
 }
 
-void OsrHandler::StartRenderLoop()
+void OsrHandler::RenderThreadMain()
 {
-	if (!m_timerPeriodRaised && timeBeginPeriod(1) == TIMERR_NOERROR)
-		m_timerPeriodRaised = true;
+	if (m_enableThreadTuning)
+	{
+		SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
+	}
 
-	m_running = true;
+	LARGE_INTEGER qpf{};
+	QueryPerformanceFrequency(&qpf);
+	const LONGLONG freq = (qpf.QuadPart > 0) ? qpf.QuadPart : 1LL;
+	const LONGLONG spinTicks = (freq / 2000LL > 0) ? (freq / 2000LL) : 1LL; // ~0.5ms
 
-	m_renderThread = std::thread([this]() {
-		if (m_enableThreadTuning)
+	auto nowTicks = []() -> LONGLONG {
+		LARGE_INTEGER t{};
+		QueryPerformanceCounter(&t);
+		return t.QuadPart;
+	};
+
+	HANDLE hiResTimer = CreateWaitableTimerExW(
+		nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+	if (!hiResTimer)
+	{
+		hiResTimer = CreateWaitableTimerExW(nullptr, nullptr, 0, TIMER_ALL_ACCESS);
+	}
+
+	auto waitUntil = [&](LONGLONG targetTick) {
+		while (m_running)
 		{
-			SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
-		}
+			const LONGLONG now = nowTicks();
+			LONGLONG remaining = targetTick - now;
+			if (remaining <= 0)
+				break;
 
-		LARGE_INTEGER qpf{};
-		QueryPerformanceFrequency(&qpf);
-		const LONGLONG freq = (qpf.QuadPart > 0) ? qpf.QuadPart : 1LL;
-		const LONGLONG spinTicks = (freq / 2000LL > 0) ? (freq / 2000LL) : 1LL; // ~0.5ms
-
-		auto nowTicks = []() -> LONGLONG {
-			LARGE_INTEGER t{};
-			QueryPerformanceCounter(&t);
-			return t.QuadPart;
-		};
-
-		HANDLE hiResTimer = CreateWaitableTimerExW(
-			nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
-		if (!hiResTimer)
-		{
-			hiResTimer = CreateWaitableTimerExW(nullptr, nullptr, 0, TIMER_ALL_ACCESS);
-		}
-
-		auto waitUntil = [&](LONGLONG targetTick) {
-			while (m_running)
+			// Coarse sleep first, then short spin to reduce wake jitter.
+			if (remaining > spinTicks)
 			{
-				const LONGLONG now = nowTicks();
-				LONGLONG remaining = targetTick - now;
-				if (remaining <= 0)
-					break;
-
-				// Coarse sleep first, then short spin to reduce wake jitter.
-				if (remaining > spinTicks)
+				const LONGLONG sleepTicks = remaining - spinTicks;
+				if (hiResTimer)
 				{
-					const LONGLONG sleepTicks = remaining - spinTicks;
-					if (hiResTimer)
+					LONGLONG due100ns = -((sleepTicks * 10000000LL) / freq);
+					if (due100ns == 0)
+						due100ns = -1;
+					LARGE_INTEGER due{};
+					due.QuadPart = due100ns;
+					if (SetWaitableTimerEx(hiResTimer, &due, 0, nullptr, nullptr, nullptr, 0))
 					{
-						LONGLONG due100ns = -((sleepTicks * 10000000LL) / freq);
-						if (due100ns == 0)
-							due100ns = -1;
-						LARGE_INTEGER due{};
-						due.QuadPart = due100ns;
-						if (SetWaitableTimerEx(hiResTimer, &due, 0, nullptr, nullptr, nullptr, 0))
-						{
-							WaitForSingleObject(hiResTimer, INFINITE);
-						}
-						else
-						{
-							DWORD sleepMs = static_cast<DWORD>((sleepTicks * 1000LL) / freq);
-							if (sleepMs == 0)
-								sleepMs = 1;
-							Sleep(sleepMs);
-						}
+						WaitForSingleObject(hiResTimer, INFINITE);
 					}
 					else
 					{
@@ -1022,115 +1008,135 @@ void OsrHandler::StartRenderLoop()
 				}
 				else
 				{
-					YieldProcessor();
+					DWORD sleepMs = static_cast<DWORD>((sleepTicks * 1000LL) / freq);
+					if (sleepMs == 0)
+						sleepMs = 1;
+					Sleep(sleepMs);
 				}
 			}
-		};
-
-		LONGLONG nextTick = nowTicks();
-
-		while (m_running)
-		{
-			const uint64_t intervalNs = m_beginFrameIntervalNs.load(std::memory_order_relaxed);
-			const uint64_t ns = (intervalNs > 0ULL) ? intervalNs : 16666666ULL;
-			LONGLONG frameTicks = static_cast<LONGLONG>((ns * static_cast<uint64_t>(freq) + 999999999ULL) / 1000000000ULL);
-			if (frameTicks <= 0)
-				frameTicks = 1;
-
-			nextTick += frameTicks;
-			waitUntil(nextTick);
-			if (!m_running)
-				break;
-
-			const LONGLONG wakeTick = nowTicks();
-			if (wakeTick > nextTick)
+			else
 			{
-				const uint64_t lateUs = static_cast<uint64_t>(((wakeTick - nextTick) * 1000000LL) / freq);
-				if (lateUs > 500ULL)
+				YieldProcessor();
+			}
+		}
+	};
+
+	LONGLONG nextTick = nowTicks();
+
+	while (m_running)
+	{
+		const uint64_t intervalNs = m_beginFrameIntervalNs.load(std::memory_order_relaxed);
+		const uint64_t ns = (intervalNs > 0ULL) ? intervalNs : 16666666ULL;
+		LONGLONG frameTicks = static_cast<LONGLONG>((ns * static_cast<uint64_t>(freq) + 999999999ULL) / 1000000000ULL);
+		if (frameTicks <= 0)
+			frameTicks = 1;
+
+		nextTick += frameTicks;
+		waitUntil(nextTick);
+		if (!m_running)
+			break;
+
+		const LONGLONG wakeTick = nowTicks();
+		if (wakeTick > nextTick)
+		{
+			const uint64_t lateUs = static_cast<uint64_t>(((wakeTick - nextTick) * 1000000LL) / freq);
+			if (lateUs > 500ULL)
+			{
+				m_statSchedMissCount.fetch_add(1, std::memory_order_relaxed);
+				m_statSchedLateUsSum.fetch_add(lateUs, std::memory_order_relaxed);
+				uint64_t prevMax = m_statSchedLateUsMax.load(std::memory_order_relaxed);
+				while (lateUs > prevMax && !m_statSchedLateUsMax.compare_exchange_weak(prevMax, lateUs, std::memory_order_relaxed))
 				{
-					m_statSchedMissCount.fetch_add(1, std::memory_order_relaxed);
-					m_statSchedLateUsSum.fetch_add(lateUs, std::memory_order_relaxed);
-					uint64_t prevMax = m_statSchedLateUsMax.load(std::memory_order_relaxed);
-					while (lateUs > prevMax && !m_statSchedLateUsMax.compare_exchange_weak(prevMax, lateUs, std::memory_order_relaxed))
-					{
-					}
 				}
 			}
-
-			if (!m_paused)
-			{
-				TrySendBeginFrame();
-				TryIdleRepairInvalidate();
-			}
-
-			// Resync only on major stalls to avoid aggressive skip/drop behavior.
-			const LONGLONG afterTick = nowTicks();
-			if (afterTick > nextTick + frameTicks * 4)
-			{
-				nextTick = afterTick;
-			}
 		}
 
-		if (hiResTimer)
-			CloseHandle(hiResTimer);
-	});
-
-	m_inputThread = std::thread([this]() {
-		if (m_enableThreadTuning)
+		if (!m_paused)
 		{
-			SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
-			TryPinCurrentThread(1);
+			TrySendBeginFrame();
+			TryIdleRepairInvalidate();
 		}
 
-		LARGE_INTEGER freq, start, now;
-		QueryPerformanceFrequency(&freq);
-		// Spin for 0.5ms before falling back to a blocking wait.
-		const LONGLONG spinTicks = freq.QuadPart / 2000;
+		// Resync only on major stalls to avoid aggressive skip/drop behavior.
+		const LONGLONG afterTick = nowTicks();
+		if (afterTick > nextTick + frameTicks * 4)
+		{
+			nextTick = afterTick;
+		}
+	}
 
+	if (hiResTimer)
+		CloseHandle(hiResTimer);
+}
+
+void OsrHandler::InputThreadMain()
+{
+	if (m_enableThreadTuning)
+	{
+		SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+		TryPinCurrentThread(1);
+	}
+
+	LARGE_INTEGER freq{}, start{}, now{};
+	QueryPerformanceFrequency(&freq);
+	// Spin for 0.5ms before falling back to a blocking wait.
+	const LONGLONG spinTicks = freq.QuadPart / 2000;
+
+	while (m_running)
+	{
+		if (m_inputBuffer.HasPendingEvents())
+		{
+			PumpInput();
+			continue;
+		}
+
+		// Spin phase: catch events that arrive within 0.5ms.
+		QueryPerformanceCounter(&start);
+		bool found = false;
 		while (m_running)
 		{
 			if (m_inputBuffer.HasPendingEvents())
 			{
-				PumpInput();
-				continue;
+				found = true;
+				break;
 			}
-
-			// Spin phase: catch events that arrive within 0.5ms.
-			QueryPerformanceCounter(&start);
-			bool found = false;
-			while (m_running)
-			{
-				if (m_inputBuffer.HasPendingEvents())
-				{
-					found = true;
-					break;
-				}
-				QueryPerformanceCounter(&now);
-				if (now.QuadPart - start.QuadPart >= spinTicks)
-					break;
-				YieldProcessor();
-			}
-
-			if (found)
-				PumpInput();
-			else
-				WaitForSingleObject(m_inputBuffer.GetEvent(), 100);
+			QueryPerformanceCounter(&now);
+			if (now.QuadPart - start.QuadPart >= spinTicks)
+				break;
+			YieldProcessor();
 		}
-	});
 
-	m_controlThread = std::thread([this]() {
-		if (m_enableThreadTuning)
-		{
-			SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
-			TryPinCurrentThread(2);
-		}
-		while (m_running)
-		{
-			WaitForSingleObject(m_controlBuffer.GetEvent(), 100);
-			if (m_running)
-				PumpControl();
-		}
-	});
+		if (found)
+			PumpInput();
+		else
+			WaitForSingleObject(m_inputBuffer.GetEvent(), 100);
+	}
+}
+
+void OsrHandler::ControlThreadMain()
+{
+	if (m_enableThreadTuning)
+	{
+		SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
+		TryPinCurrentThread(2);
+	}
+	while (m_running)
+	{
+		WaitForSingleObject(m_controlBuffer.GetEvent(), 100);
+		if (m_running)
+			PumpControl();
+	}
+}
+
+void OsrHandler::StartRenderLoop()
+{
+	if (!m_timerPeriodRaised && timeBeginPeriod(1) == TIMERR_NOERROR)
+		m_timerPeriodRaised = true;
+
+	m_running = true;
+	m_renderThread = std::thread([this]() { RenderThreadMain(); });
+	m_inputThread = std::thread([this]() { InputThreadMain(); });
+	m_controlThread = std::thread([this]() { ControlThreadMain(); });
 }
 
 void OsrHandler::StopRenderLoop()

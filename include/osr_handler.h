@@ -120,6 +120,9 @@ private:
 	void HandleControlLoadHtmlString(CefRefPtr<CefBrowser> browser, const char16_t* html);
 	void HandleControlScrollTo(CefRefPtr<CefBrowser> browser, int32_t x, int32_t y);
 	void HandleControlOpenDevTools(CefRefPtr<CefBrowserHost> host);
+	void RenderThreadMain();
+	void InputThreadMain();
+	void ControlThreadMain();
 	void TrySendBeginFrame();
 	void TryIdleRepairInvalidate();
 	void UpdateBeginFrameIntervalFromFps(uint32_t fps);
