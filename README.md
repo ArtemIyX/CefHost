@@ -28,7 +28,7 @@ Expected integration model:
 
 ## CEF Version In Use
 
-Current bundled runtime detected from `build/Release/libcef.dll`:
+Current version of  `build/Release/libcef.dll`:
 - `146.0.10+g8219561+chromium-146.0.7680.179`
 
 If you need newer CEF builds:
@@ -51,12 +51,6 @@ cmake -S . -B build
 ```
 
 ### 2. Build
-
-```powershell
-cmake --build build --config Release
-```
-
-Project rule check command is the same:
 
 ```powershell
 cmake --build build --config Release
@@ -188,6 +182,13 @@ Consumer should:
 ## Dev Convenience
 
 `build.bat` currently:
+
+```bash
+@echo off
+cmake --build build --config Release
+xcopy /E /Y /I build\Release\* "C:\Users\Wellsaik\source\repos\CefUiExample\Plugins\CefWebUi\Source\ThirdParty\Cef\"
+```
+
 - builds Release,
 - copies output into a local Unreal plugin ThirdParty path (machine-specific).
 
