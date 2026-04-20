@@ -583,3 +583,20 @@ YYYY-MM-DD HH:MM
 ### Impact
 - Documentation-only change.
 - No runtime behavior change.
+
+---
+
+## 2026-04-20 14:19
+
+### Changed
+- Rewrote SKILLS.md to match current host architecture and behavior.
+- Updated protocol/transport notes to current state (triple-slot shared textures, popup plane, shared fence, console ring).
+- Added explicit single-session limitation and current CEF runtime version.
+
+### Why
+- Previous SKILLS.md was stale (double-buffer assumptions and outdated flow details).
+- Keep project knowledge base consistent with implementation.
+
+### Impact
+- Documentation-only update.
+- No runtime behavior changes.
