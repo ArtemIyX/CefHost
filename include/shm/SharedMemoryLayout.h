@@ -2,30 +2,52 @@
 #include <atomic>
 #include <cstdint>
 
+/** @brief Maximum supported shared frame width. */
 constexpr uint32_t SHM_MAX_WIDTH = 3840;
+/** @brief Maximum supported shared frame height. */
 constexpr uint32_t SHM_MAX_HEIGHT = 2160;
+/** @brief BGRA byte size for one max-size frame. */
 constexpr uint32_t SHM_FRAME_SIZE = SHM_MAX_WIDTH * SHM_MAX_HEIGHT * 4;
+/** @brief Number of shared frame ring slots. */
 constexpr uint32_t SHM_FRAME_SLOT_COUNT = 3;
+/** @brief Shared protocol version used by host/consumer. */
 constexpr uint32_t SHM_PROTOCOL_VERSION = 4;
+/** @brief Shared protocol magic marker ('CEFH'). */
 constexpr uint32_t SHM_PROTOCOL_MAGIC = 0x43454648; // 'CEFH'
 
+/** @brief Input ring capacity in events. */
 constexpr uint32_t INPUT_RING_CAPACITY = 256;
+/** @brief Control ring capacity in events. */
 constexpr uint32_t CONTROL_RING_CAPACITY = 64;
+/** @brief Console ring capacity in events. */
 constexpr uint32_t CONSOLE_RING_CAPACITY = 256;
+/** @brief Max UTF-16 console message length. */
 constexpr uint32_t CONSOLE_MESSAGE_MAX = 1024;
+/** @brief Max UTF-16 console source length. */
 constexpr uint32_t CONSOLE_SOURCE_MAX = 256;
 
+/** @brief Shared mapping name for frame channel. */
 constexpr const wchar_t* SHM_FRAME_NAME = L"CEFHost_Frame";
+/** @brief Shared mapping name for input channel. */
 constexpr const wchar_t* SHM_INPUT_NAME = L"CEFHost_Input";
+/** @brief Auto-reset event name for frame-ready notifications. */
 constexpr const wchar_t* EVT_FRAME_READY = L"CEFHost_FrameReady";
+/** @brief Auto-reset event name for input-ready notifications. */
 constexpr const wchar_t* EVT_INPUT_READY = L"CEFHost_InputReady";
+/** @brief Shared mapping name for control channel. */
 constexpr const wchar_t* SHM_CONTROL_NAME = L"CEFHost_Control";
+/** @brief Auto-reset event name for control-ready notifications. */
 constexpr const wchar_t* EVT_CONTROL_READY = L"CEFHost_ControlReady";
+/** @brief Shared mapping name for console channel. */
 constexpr const wchar_t* SHM_CONSOLE_NAME = L"CEFHost_Console";
+/** @brief Auto-reset event name for console-ready notifications. */
 constexpr const wchar_t* EVT_CONSOLE_READY = L"CEFHost_ConsoleReady";
+/** @brief Global shutdown event name used for cross-process stop signals. */
 constexpr const wchar_t* EVT_SHUTDOWN = L"CEFHost_Shutdown";
+/** @brief Named shared GPU fence object. */
 constexpr const wchar_t* SHM_GPU_FENCE_NAME = L"Global\\CEFHost_SharedFence";
 
+/** @brief Cursor values mirrored from CEF cursor types. */
 enum class CefCursorType : uint8_t
 {
 	CT_POINTER,
@@ -81,6 +103,7 @@ enum class CefCursorType : uint8_t
 	CT_NUM_VALUES,
 };
 
+/** @brief Main-frame load state published to consumer. */
 enum class CefLoadState : uint8_t
 {
 	Idle = 0,
@@ -89,13 +112,16 @@ enum class CefLoadState : uint8_t
 	Error = 3,
 };
 
+/** @brief Maximum number of dirty rects published in one frame. */
 constexpr uint32_t MAX_DIRTY_RECTS = 16;
 
+/** @brief Rectangle in frame pixel space. */
 struct DirtyRect
 {
 	int32_t x, y, w, h;
 };
 
+/** @brief Per-frame publish flags in FrameHeader::flags. */
 enum FrameFlags : uint32_t
 {
 	FRAME_FLAG_NONE = 0,
@@ -106,6 +132,11 @@ enum FrameFlags : uint32_t
 	FRAME_FLAG_POPUP_PLANE = 1u << 4,
 };
 
+/**
+ * @brief Shared frame metadata header.
+ *
+ * Written by producer before incrementing sequence and signaling EVT_FRAME_READY.
+ */
 struct FrameHeader
 {
 	uint32_t protocol_magic;
@@ -127,9 +158,11 @@ struct FrameHeader
 	DirtyRect popup_rect;
 	DirtyRect dirty_rects[MAX_DIRTY_RECTS];
 };
-// Pixel buffers kept for layout compat but unused in GPU path
+/** @brief Total legacy frame mapping byte size (header + CPU pixel ring). */
+// Pixel buffers kept for layout compat but unused in GPU path.
 constexpr uint32_t SHM_FRAME_TOTAL = sizeof(FrameHeader) + SHM_FRAME_SIZE * SHM_FRAME_SLOT_COUNT;
 
+/** @brief Input event kinds sent from consumer to host. */
 enum class InputEventType : uint8_t
 {
 	MouseMove = 0,
@@ -141,6 +174,7 @@ enum class InputEventType : uint8_t
 	KeyChar = 6,
 };
 
+/** @brief Union payload for one input event in shared input ring. */
 struct InputEvent
 {
 	InputEventType type;
@@ -169,6 +203,7 @@ struct InputEvent
 	};
 };
 
+/** @brief Single-producer/single-consumer style input ring in shared memory. */
 struct InputRingBuffer
 {
 	std::atomic<uint32_t> write_index;
@@ -178,6 +213,7 @@ struct InputRingBuffer
 	InputEvent events[INPUT_RING_CAPACITY];
 };
 
+/** @brief Control command kinds sent from consumer to host. */
 enum class ControlEventType : uint8_t
 {
 	GoBack = 0,
@@ -206,8 +242,10 @@ enum class ControlEventType : uint8_t
 	LoadHtmlString = 23,
 };
 
+/** @brief Max UTF-16 payload length for string-based control commands. */
 constexpr uint32_t CONTROL_STRING_MAX = 2048;
 
+/** @brief Union payload for one control event in shared control ring. */
 struct ControlEvent
 {
 	ControlEventType type;
@@ -247,6 +285,7 @@ struct ControlEvent
 	};
 };
 
+/** @brief Single-producer/single-consumer style control ring in shared memory. */
 struct ControlRingBuffer
 {
 	std::atomic<uint32_t> write_index;
@@ -256,6 +295,7 @@ struct ControlRingBuffer
 	ControlEvent events[CONTROL_RING_CAPACITY];
 };
 
+/** @brief Console severity levels mirrored from CEF log severities. */
 enum class ConsoleLogLevel : uint8_t
 {
 	Log = 0,
@@ -263,6 +303,7 @@ enum class ConsoleLogLevel : uint8_t
 	Error = 2,
 };
 
+/** @brief One console message event in shared console ring. */
 struct ConsoleLogEvent
 {
 	ConsoleLogLevel level;
@@ -272,6 +313,7 @@ struct ConsoleLogEvent
 	char16_t message[CONSOLE_MESSAGE_MAX];
 };
 
+/** @brief Single-producer/single-consumer style console ring in shared memory. */
 struct ConsoleRingBuffer
 {
 	std::atomic<uint32_t> write_index;

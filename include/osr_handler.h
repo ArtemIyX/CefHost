@@ -110,36 +110,67 @@ public:
 	void Shutdown();
 
 private:
+	/** @brief Drains input ring and forwards events into CEF host. */
 	void PumpInput();
+	/** @brief Drains control ring and applies browser/runtime commands. */
 	void PumpControl();
+	/** @brief Sends rate-limited begin-frame request after interactive input. */
 	void TryInputNudgeFrame();
+	/** @brief Dispatches one input event to CEF and returns whether repaint nudge is needed. */
 	bool DispatchInputEvent(CefRefPtr<CefBrowserHost> host, const InputEvent& evt);
+	/** @brief Applies one control event to browser/host/runtime state. */
 	void HandleControlEvent(CefRefPtr<CefBrowser> browser, CefRefPtr<CefBrowserHost> host, const ControlEvent& evt);
+	/** @brief Applies frame-rate command and syncs producer interval. */
 	void HandleControlSetFrameRate(CefRefPtr<CefBrowserHost> host, uint32_t requestedFps);
+	/** @brief Applies in-flight begin-frame cap and resets stale debt. */
 	void HandleControlSetMaxInFlightBeginFrames(uint32_t requestedMaxInFlight);
+	/** @brief Loads provided HTML as UTF-8 data URL in main frame. */
 	void HandleControlLoadHtmlString(CefRefPtr<CefBrowser> browser, const char16_t* html);
+	/** @brief Executes JS window scrollTo(x,y) helper. */
 	void HandleControlScrollTo(CefRefPtr<CefBrowser> browser, int32_t x, int32_t y);
+	/** @brief Opens Chromium devtools window for current browser host. */
 	void HandleControlOpenDevTools(CefRefPtr<CefBrowserHost> host);
+	/** @brief Initializes all shared-memory channels used by host. */
 	bool InitSharedChannels();
+	/** @brief Initializes D3D interfaces and optional shared GPU fence. */
 	bool InitD3DInterfaces();
+	/** @brief Writes initial frame header protocol defaults. */
 	void InitFrameHeaderDefaults();
+	/** @brief Releases shared texture ring and popup-plane resources. */
 	void ReleaseSharedTextureResources();
+	/** @brief Releases cached/opened D3D objects owned by handler. */
 	void ReleaseD3DResources();
+	/** @brief Shuts down all shared-memory channel wrappers. */
 	void ShutdownSharedChannels();
+	/** @brief Clears shared texture ring COM objects and OS handles. */
 	void ResetSharedTextureRing();
+	/** @brief Creates named shared textures for each ring slot. */
 	bool CreateSharedTextureRing(ID3D11Device* device, const D3D11_TEXTURE2D_DESC& desc);
+	/** @brief Clears dedicated popup-plane texture COM object and handle. */
 	void ResetSharedPopupPlane();
+	/** @brief Creates dedicated popup-plane shared texture/handle. */
 	bool CreateSharedPopupPlane(ID3D11Device* device, const D3D11_TEXTURE2D_DESC& desc);
+	/** @brief Publishes resized-frame metadata to shared frame header. */
 	void UpdateSharedResizeHeader(uint32_t width, uint32_t height);
+	/** @brief Main producer cadence thread body. */
 	void RenderThreadMain();
+	/** @brief Main input-consumer thread body. */
 	void InputThreadMain();
+	/** @brief Main control-consumer thread body. */
 	void ControlThreadMain();
+	/** @brief Sends external begin frame when backpressure allows. */
 	void TrySendBeginFrame();
+	/** @brief Optional idle repair hook for stale-dirty recovery. */
 	void TryIdleRepairInvalidate();
+	/** @brief Sets producer interval from requested FPS. */
 	void UpdateBeginFrameIntervalFromFps(uint32_t fps);
+	/** @brief Sets producer interval from consumer cadence feedback. */
 	void UpdateBeginFrameIntervalFromConsumerCadenceUs(uint32_t cadenceUs);
+	/** @brief Starts render/input/control worker threads. */
 	void StartRenderLoop();
+	/** @brief Stops worker threads and restores timer settings. */
 	void StopRenderLoop();
+	/** @brief Ensures shared texture resources exist for target size. */
 	bool EnsureSharedTextures(uint32_t width, uint32_t height, bool* outRecreated = nullptr);
 
 	uint32_t m_width;
