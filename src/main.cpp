@@ -5,6 +5,9 @@
 #include "cef_browser_app.h"
 #include "D3d11device.h"
 #include "host_runtime_config.h"
+#include "shm/SharedMemoryLayout.h"
+#include <filesystem>
+#include <cstdio>
 #include <timeapi.h>
 #pragma comment(lib, "winmm.lib")
 
@@ -40,6 +43,32 @@ int main(int argc, char* argv[])
 	CefSettings settings;
 	settings.no_sandbox = true;
 	settings.windowless_rendering_enabled = true;
+	const std::wstring sessionSuffix = SanitizeSessionId(config.SessionId);
+
+	const char* localAppData = std::getenv("LOCALAPPDATA");
+	std::filesystem::path profileBase = localAppData && *localAppData
+		? std::filesystem::path(localAppData)
+		: std::filesystem::temp_directory_path();
+	profileBase /= "CEF_HOST";
+	profileBase /= "profiles";
+	profileBase /= sessionSuffix.empty() ? std::wstring(L"legacy") : sessionSuffix;
+	const std::filesystem::path rootCachePath = profileBase / "root";
+	const std::filesystem::path cachePath = rootCachePath / "default";
+	std::error_code ec;
+	std::filesystem::create_directories(cachePath, ec);
+	if (ec)
+	{
+		fprintf(stderr, "[main] Failed to create profile dirs: %s (err=%d)\n",
+			cachePath.string().c_str(), ec.value());
+	}
+
+	CefString(&settings.root_cache_path) = rootCachePath.wstring();
+	CefString(&settings.cache_path) = cachePath.wstring();
+	fprintf(stdout, "[main] SessionId raw='%s' sanitized='%ls'\n",
+		config.SessionId.c_str(),
+		sessionSuffix.empty() ? L"<empty>" : sessionSuffix.c_str());
+	fprintf(stdout, "[main] CEF root_cache_path='%ls'\n", rootCachePath.wstring().c_str());
+	fprintf(stdout, "[main] CEF cache_path='%ls'\n", cachePath.wstring().c_str());
 
 	CefInitialize(main_args, settings, app, nullptr);
 	CefRunMessageLoop();
