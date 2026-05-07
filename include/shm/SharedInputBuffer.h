@@ -9,14 +9,17 @@
 class SharedInputBuffer
 {
 public:
+	explicit SharedInputBuffer(const SharedMemoryNames& names = BuildSharedMemoryNames(""))
+		: m_names(names) {}
+
 	/**
-     * @brief Creates/opens input ring mapping and ready event.
-     * @return true when initialization succeeded.
-     */
+	 * @brief Creates/opens input ring mapping and ready event.
+	 * @return true when initialization succeeded.
+	 */
 	bool Init()
 	{
 		m_hMap = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr,
-			PAGE_READWRITE, 0, sizeof(InputRingBuffer), SHM_INPUT_NAME);
+			PAGE_READWRITE, 0, sizeof(InputRingBuffer), m_names.InputMapName.c_str());
 		if (!m_hMap)
 			return false;
 
@@ -25,7 +28,7 @@ public:
 		if (!m_pRing)
 			return false;
 
-		m_hEvent = CreateEventW(nullptr, FALSE, FALSE, EVT_INPUT_READY);
+		m_hEvent = CreateEventW(nullptr, FALSE, FALSE, m_names.InputReadyEventName.c_str());
 		if (!m_hEvent)
 			return false;
 
@@ -38,10 +41,10 @@ public:
 	}
 
 	/**
-     * @brief Pops one input event from ring.
-     * @param out_event Output event when available.
-     * @return false when ring is empty or not initialized.
-     */
+	 * @brief Pops one input event from ring.
+	 * @param out_event Output event when available.
+	 * @return false when ring is empty or not initialized.
+	 */
 	bool ReadEvent(InputEvent& out_event)
 	{
 		if (!m_pRing)
@@ -91,6 +94,7 @@ public:
 	~SharedInputBuffer() { Shutdown(); }
 
 private:
+	SharedMemoryNames m_names;
 	HANDLE m_hMap = nullptr;
 	HANDLE m_hEvent = nullptr;
 	InputRingBuffer* m_pRing = nullptr;

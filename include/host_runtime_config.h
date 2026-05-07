@@ -16,6 +16,8 @@ struct HostRuntimeConfig
 	int32_t FrameRate = 60;
 	/** @brief Startup URL loaded on first browser creation. */
 	std::string StartupUrl = "https://google.com/";
+	/** @brief Optional unique process/session suffix for shared IPC object names. */
+	std::string SessionId;
 	/** @brief Enables thread priority/affinity tuning for worker loops. */
 	bool EnableThreadTuning = true;
 	/** @brief Enables adaptive begin-frame pacing from consumer cadence. */

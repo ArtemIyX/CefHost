@@ -78,6 +78,13 @@ HostRuntimeConfig HostRuntimeConfig::FromArgs(int argc, char* argv[])
 				cfg.StartupUrl = v;
 			continue;
 		}
+		if (key == "--session-id")
+		{
+			std::string v;
+			if (takeNext(v))
+				cfg.SessionId = v;
+			continue;
+		}
 		if (key == "--width")
 		{
 			std::string v;
@@ -128,6 +135,7 @@ void HostRuntimeConfig::PrintUsage()
 	std::cout
 		<< "CEF Host runtime options:\n"
 		<< "  --url <value>                 Startup URL\n"
+		<< "  --session-id <value>          Unique suffix for shared IPC object names\n"
 		<< "  --size <width>x<height>       Browser size\n"
 		<< "  --width <value>               Browser width\n"
 		<< "  --height <value>              Browser height\n"

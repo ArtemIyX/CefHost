@@ -15,6 +15,7 @@
 #include <atomic>
 #include <mutex>
 #include <array>
+#include <string>
 
 using Microsoft::WRL::ComPtr;
 
@@ -33,7 +34,7 @@ public:
 	 * @param height Initial viewport height in pixels.
 	 * @param targetFps Producer cadence hint (1..240 typical).
 	 */
-	OsrHandler(uint32_t width, uint32_t height, uint32_t targetFps = 60);
+	OsrHandler(uint32_t width, uint32_t height, const std::string& sessionId = "", uint32_t targetFps = 60);
 	~OsrHandler() = default;
 
 	/** @brief Returns CEF render handler interface. */
@@ -152,6 +153,7 @@ private:
 	bool CreateSharedPopupPlane(ID3D11Device* device, const D3D11_TEXTURE2D_DESC& desc);
 	/** @brief Publishes resized-frame metadata to shared frame header. */
 	void UpdateSharedResizeHeader(uint32_t width, uint32_t height);
+	std::wstring MakeSharedTextureSlotName(uint32_t slot) const;
 	/** @brief Main producer cadence thread body. */
 	void RenderThreadMain();
 	/** @brief Main input-consumer thread body. */
@@ -175,6 +177,7 @@ private:
 
 	uint32_t m_width;
 	uint32_t m_height;
+	SharedMemoryNames m_sharedNames;
 	SharedFrameBuffer m_frameBuffer;
 	SharedInputBuffer m_inputBuffer;
 	SharedControlBuffer m_controlBuffer;

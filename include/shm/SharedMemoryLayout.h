@@ -1,6 +1,7 @@
 #pragma once
 #include <atomic>
 #include <cstdint>
+#include <string>
 
 /** @brief Maximum supported shared frame width. */
 constexpr uint32_t SHM_MAX_WIDTH = 3840;
@@ -46,6 +47,60 @@ constexpr const wchar_t* EVT_CONSOLE_READY = L"CEFHost_ConsoleReady";
 constexpr const wchar_t* EVT_SHUTDOWN = L"CEFHost_Shutdown";
 /** @brief Named shared GPU fence object. */
 constexpr const wchar_t* SHM_GPU_FENCE_NAME = L"Global\\CEFHost_SharedFence";
+
+struct SharedMemoryNames
+{
+	std::wstring FrameMapName;
+	std::wstring InputMapName;
+	std::wstring FrameReadyEventName;
+	std::wstring InputReadyEventName;
+	std::wstring ControlMapName;
+	std::wstring ControlReadyEventName;
+	std::wstring ConsoleMapName;
+	std::wstring ConsoleReadyEventName;
+	std::wstring ShutdownEventName;
+	std::wstring GpuFenceName;
+	std::wstring SharedTexturePrefix;
+	std::wstring SharedPopupTextureName;
+};
+
+inline std::wstring MakeScopedName(const wchar_t* baseName, const std::wstring& suffix)
+{
+	if (suffix.empty())
+		return std::wstring(baseName);
+	return std::wstring(baseName) + L"_" + suffix;
+}
+
+inline std::wstring SanitizeSessionId(std::string sessionId)
+{
+	std::wstring out;
+	out.reserve(sessionId.size());
+	for (const unsigned char c : sessionId)
+	{
+		if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '-' || c == '_')
+			out.push_back(static_cast<wchar_t>(c));
+	}
+	return out;
+}
+
+inline SharedMemoryNames BuildSharedMemoryNames(const std::string& sessionIdUtf8)
+{
+	const std::wstring suffix = SanitizeSessionId(sessionIdUtf8);
+	SharedMemoryNames names;
+	names.FrameMapName = MakeScopedName(SHM_FRAME_NAME, suffix);
+	names.InputMapName = MakeScopedName(SHM_INPUT_NAME, suffix);
+	names.FrameReadyEventName = MakeScopedName(EVT_FRAME_READY, suffix);
+	names.InputReadyEventName = MakeScopedName(EVT_INPUT_READY, suffix);
+	names.ControlMapName = MakeScopedName(SHM_CONTROL_NAME, suffix);
+	names.ControlReadyEventName = MakeScopedName(EVT_CONTROL_READY, suffix);
+	names.ConsoleMapName = MakeScopedName(SHM_CONSOLE_NAME, suffix);
+	names.ConsoleReadyEventName = MakeScopedName(EVT_CONSOLE_READY, suffix);
+	names.ShutdownEventName = MakeScopedName(EVT_SHUTDOWN, suffix);
+	names.GpuFenceName = MakeScopedName(SHM_GPU_FENCE_NAME, suffix);
+	names.SharedTexturePrefix = MakeScopedName(L"Global\\CEFHost_SharedTex", suffix);
+	names.SharedPopupTextureName = MakeScopedName(L"Global\\CEFHost_SharedPopupTex", suffix);
+	return names;
+}
 
 /** @brief Cursor values mirrored from CEF cursor types. */
 enum class CefCursorType : uint8_t

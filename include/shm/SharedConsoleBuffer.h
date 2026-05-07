@@ -9,6 +9,9 @@
 class SharedConsoleBuffer
 {
 public:
+	explicit SharedConsoleBuffer(const SharedMemoryNames& names = BuildSharedMemoryNames(""))
+		: m_names(names) {}
+
 	/**
 	 * @brief Creates/opens console ring mapping and ready event.
 	 * @return true when initialization succeeded.
@@ -16,7 +19,7 @@ public:
 	bool Init()
 	{
 		m_hMap = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr,
-			PAGE_READWRITE, 0, sizeof(ConsoleRingBuffer), SHM_CONSOLE_NAME);
+			PAGE_READWRITE, 0, sizeof(ConsoleRingBuffer), m_names.ConsoleMapName.c_str());
 		if (!m_hMap)
 			return false;
 
@@ -25,7 +28,7 @@ public:
 		if (!m_pRing)
 			return false;
 
-		m_hEvent = CreateEventW(nullptr, FALSE, FALSE, EVT_CONSOLE_READY);
+		m_hEvent = CreateEventW(nullptr, FALSE, FALSE, m_names.ConsoleReadyEventName.c_str());
 		if (!m_hEvent)
 			return false;
 
@@ -85,6 +88,7 @@ public:
 	~SharedConsoleBuffer() { Shutdown(); }
 
 private:
+	SharedMemoryNames m_names;
 	HANDLE m_hMap = nullptr;
 	HANDLE m_hEvent = nullptr;
 	ConsoleRingBuffer* m_pRing = nullptr;

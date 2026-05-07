@@ -13,14 +13,17 @@
 class SharedFrameBuffer
 {
 public:
+	explicit SharedFrameBuffer(const SharedMemoryNames& names = BuildSharedMemoryNames(""))
+		: m_names(names) {}
+
 	/**
-     * @brief Creates/opens shared frame mapping and ready event.
-     * @return true when mapping and event are available.
-     */
+	 * @brief Creates/opens shared frame mapping and ready event.
+	 * @return true when mapping and event are available.
+	 */
 	bool Init()
 	{
 		m_hMap = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr,
-			PAGE_READWRITE, 0, SHM_FRAME_TOTAL, SHM_FRAME_NAME);
+			PAGE_READWRITE, 0, SHM_FRAME_TOTAL, m_names.FrameMapName.c_str());
 		if (!m_hMap)
 			return false;
 
@@ -28,7 +31,7 @@ public:
 		if (!m_pData)
 			return false;
 
-		m_hEvent = CreateEventW(nullptr, FALSE, FALSE, EVT_FRAME_READY);
+		m_hEvent = CreateEventW(nullptr, FALSE, FALSE, m_names.FrameReadyEventName.c_str());
 		if (!m_hEvent)
 			return false;
 
@@ -37,12 +40,12 @@ public:
 	}
 
 	/**
-     * @brief Writes a CPU BGRA frame into ring slot and publishes metadata.
-     * @param width Frame width.
-     * @param height Frame height.
-     * @param bgra_data Pixel source pointer.
-     * @param data_size Source size in bytes.
-     */
+	 * @brief Writes a CPU BGRA frame into ring slot and publishes metadata.
+	 * @param width Frame width.
+	 * @param height Frame height.
+	 * @param bgra_data Pixel source pointer.
+	 * @param data_size Source size in bytes.
+	 */
 	void WriteFrame(uint32_t width, uint32_t height, const void* bgra_data, size_t data_size)
 	{
 		if (!m_pData)
@@ -106,6 +109,7 @@ public:
 	HANDLE GetEvent() const { return m_hEvent; }
 
 private:
+	SharedMemoryNames m_names;
 	HANDLE m_hMap = nullptr;
 	HANDLE m_hEvent = nullptr;
 	void* m_pData = nullptr;

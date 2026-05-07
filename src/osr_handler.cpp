@@ -236,8 +236,14 @@ namespace
 
 extern D3D11Device g_D3D11Device;
 
-OsrHandler::OsrHandler(uint32_t width, uint32_t height, uint32_t targetFps)
-	: m_width(width), m_height(height)
+OsrHandler::OsrHandler(uint32_t width, uint32_t height, const std::string& sessionId, uint32_t targetFps)
+	: m_width(width)
+	, m_height(height)
+	, m_sharedNames(BuildSharedMemoryNames(sessionId))
+	, m_frameBuffer(m_sharedNames)
+	, m_inputBuffer(m_sharedNames)
+	, m_controlBuffer(m_sharedNames)
+	, m_consoleBuffer(m_sharedNames)
 {
 	UpdateBeginFrameIntervalFromFps(targetFps);
 }
@@ -275,14 +281,14 @@ bool OsrHandler::InitD3DInterfaces()
 			if (SUCCEEDED(hr))
 			{
 				HANDLE fenceHandle = nullptr;
-				hr = fence->CreateSharedHandle(nullptr, GENERIC_ALL, SHM_GPU_FENCE_NAME, &fenceHandle);
+				hr = fence->CreateSharedHandle(nullptr, GENERIC_ALL, m_sharedNames.GpuFenceName.c_str(), &fenceHandle);
 				if (SUCCEEDED(hr))
 				{
 					m_device5 = device5;
 					m_context4 = context4;
 					m_sharedFence = fence;
 					m_sharedFenceHandle = fenceHandle;
-					fprintf(stdout, "[OsrHandler] Shared GPU fence created: %ls\n", SHM_GPU_FENCE_NAME);
+					fprintf(stdout, "[OsrHandler] Shared GPU fence created: %ls\n", m_sharedNames.GpuFenceName.c_str());
 				}
 				else
 				{
@@ -364,6 +370,11 @@ void OsrHandler::ResetSharedTextureRing()
 	}
 }
 
+std::wstring OsrHandler::MakeSharedTextureSlotName(uint32_t slot) const
+{
+	return m_sharedNames.SharedTexturePrefix + L"_" + std::to_wstring(slot);
+}
+
 bool OsrHandler::CreateSharedTextureRing(ID3D11Device* device, const D3D11_TEXTURE2D_DESC& desc)
 {
 	for (uint32_t i = 0; i < BUFFER_COUNT; ++i)
@@ -383,16 +394,15 @@ bool OsrHandler::CreateSharedTextureRing(ID3D11Device* device, const D3D11_TEXTU
 			return false;
 		}
 
-		wchar_t name[64];
-		swprintf(name, 64, L"Global\\CEFHost_SharedTex_%u", i);
+		const std::wstring name = MakeSharedTextureSlotName(i);
 		hr = dxgiRes->CreateSharedHandle(
-			nullptr, DXGI_SHARED_RESOURCE_READ, name, &m_sharedNTHandle[i]);
+			nullptr, DXGI_SHARED_RESOURCE_READ, name.c_str(), &m_sharedNTHandle[i]);
 		if (FAILED(hr))
 		{
 			fprintf(stderr, "[OsrHandler] CreateSharedHandle[%u] failed: 0x%08X\n", i, hr);
 			return false;
 		}
-		fprintf(stdout, "[OsrHandler] Created named shared handle[%u]: %ls\n", i, name);
+		fprintf(stdout, "[OsrHandler] Created named shared handle[%u]: %ls\n", i, name.c_str());
 	}
 
 	return true;
@@ -426,7 +436,7 @@ bool OsrHandler::CreateSharedPopupPlane(ID3D11Device* device, const D3D11_TEXTUR
 	}
 
 	hr = popupDxgi->CreateSharedHandle(nullptr, DXGI_SHARED_RESOURCE_READ,
-		L"Global\\CEFHost_SharedPopupTex", &m_sharedPopupHandle);
+		m_sharedNames.SharedPopupTextureName.c_str(), &m_sharedPopupHandle);
 	if (FAILED(hr))
 	{
 		fprintf(stderr, "[OsrHandler] CreateSharedHandle popup plane failed: 0x%08X\n", hr);
